@@ -122,23 +122,49 @@ fn parse_data_fields(i: &str) -> IResult<&str, Vec<DataField>> {
 
 fn parse_entry(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Stem> + '_ {
 	move |i| {
-		let (i1, (stem, flags)) = parse_stem_and_flags(fty)(i)?;
-		let (i2, data) = parse_data_fields.terminated(newline).parse(i1)?;
+		let (i, (stem, flags)) = parse_stem_and_flags(fty)(i)?;
+		let (i, data) = parse_data_fields.terminated(newline).parse(i)?;
 
 		let stem = Stem {
+			case: Casing::guess(&stem),
+
 			stem,
 			flags,
 			data,
-			case: Casing::TODO,
 		};
 
-		Ok((i2, stem))
+		Ok((i, stem))
 	}
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Casing {
-	TODO,
+	/// All lowercase (“foo”)
+	No,
+	/// Titlecase, only initial letter is capitalized (“Foo”)
+	Init,
+	/// All uppercase (“FOO”)
+	All,
+	/// Mixed capitalization (“fooBar”)
+	Huh,
+	/// Mixed capitalization, first letter is capitalized (“FooBar”)
+	HuhInit,
+}
+
+impl Casing {
+	fn guess(s: &str) -> Self {
+		let first_char_is_upper = s.chars().next().is_some_and(char::is_uppercase);
+		let chars = s.chars().skip(1);
+
+		#[allow(clippy::match_bool)]
+		match first_char_is_upper {
+			false if chars.clone().all(char::is_lowercase) => Self::No,
+			true if chars.clone().all(char::is_lowercase) => Self::Init,
+			true if chars.clone().all(char::is_uppercase) => Self::All,
+			false => Self::HuhInit,
+			true => Self::Huh,
+		}
+	}
 }
 
 // TODO: use &str
@@ -286,7 +312,7 @@ mod tests {
 			stem: "word".into(),
 			flags: vec![Flag::Short('F'), Flag::Short('G'), Flag::Short('S')],
 			data: vec![Alternative(TEST_WORD.into())],
-			case: Casing::TODO,
+			case: Casing::No,
 		});
 
 		Ok(())
