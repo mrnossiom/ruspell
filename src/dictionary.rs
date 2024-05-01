@@ -2,8 +2,8 @@ use crate::{aff::AffFile, dic::DicFile};
 use std::{io, path::Path};
 
 pub struct Dictionary {
-	aff: AffFile,
-	dic: DicFile,
+	pub(crate) aff: AffFile,
+	pub(crate) dic: DicFile,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +15,7 @@ pub enum InitializeError {
 	Io(#[from] io::Error),
 }
 
+/// Constructors
 impl Dictionary {
 	/// # Errors
 	///
@@ -40,7 +41,7 @@ impl Dictionary {
 		Ok(Self { aff, dic })
 	}
 
-	/// Hunspell dictionaries are sometimes distrubuted as `zip` archives containing
+	/// Hunspell dictionaries are sometimes distributed as `zip` archives containing
 	/// both the dictionary and affix file.
 	///
 	/// This is the case for LibreOffice (`.odt`) and Firefox (`.xpi`) dictionaries.
@@ -51,6 +52,6 @@ impl Dictionary {
 	/// to be parsed. It will fail too if the provided zip does not exists or
 	/// contain both required files.
 	pub fn from_zip(_path: &Path) -> Result<Self, InitializeError> {
-		todo!()
+		todo!("ruspell cannot import zip files yet")
 	}
 }

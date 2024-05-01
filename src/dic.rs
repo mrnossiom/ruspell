@@ -1,37 +1,32 @@
 use crate::{
-	aff::{self, parse_flag, Flag, FlagType},
+	aff::{self, parse_flags, Flag},
 	dictionary::InitializeError,
 };
-use core::fmt;
 use nom::{
 	bytes::complete::{is_not, tag, take},
-	character::complete::{newline, none_of, space1, u64 as u64_p},
-	combinator::{fail, map},
-	multi::{many0, many1, separated_list1},
+	character::complete::{newline, space1, u64 as u64_p},
+	combinator::map,
+	multi::many0,
+	sequence::tuple,
 	IResult, Parser,
 };
 use nom_supreme::ParserExt;
-use std::{fmt::Debug, fs::File, io::Read, path::Path};
+use std::{
+	collections::HashMap,
+	fmt::{self, Debug},
+	fs::File,
+	io::Read,
+	path::Path,
+};
 
-#[derive(Debug)]
 pub(crate) struct DicFile {
 	stems: Vec<Stem>,
+	index: HashMap<String, Vec<Stem>>,
 }
 
 impl DicFile {
 	pub(crate) fn new(content: &str, options: &aff::Options) -> Result<Self, InitializeError> {
-		let parser_err = |e: nom::Err<nom::error::Error<_>>| InitializeError::Parser(e.to_string());
-
-		let (i, _nb_of_lines) = u64_p
-			.terminated(newline)
-			.parse(content)
-			.map_err(parser_err)?;
-		let (_, stems) = many0(parse_entry(&options.flag_ty))
-			.all_consuming()
-			.parse(i)
-			.map_err(parser_err)?;
-
-		Ok(Self { stems })
+		DicParser { options }.parse(content)
 	}
 
 	pub(crate) fn file(path: &Path, options: &aff::Options) -> Result<Self, InitializeError> {
@@ -39,6 +34,62 @@ impl DicFile {
 		let mut buffer = String::new();
 		file.read_to_string(&mut buffer)?;
 		Self::new(&buffer, options)
+	}
+
+	pub(crate) fn homonyms<'a>(&'a self, stem: &'a str) -> impl Iterator<Item = &Stem> + 'a {
+		self.index.get(stem).into_iter().flatten()
+	}
+}
+
+struct DicParser<'options> {
+	options: &'options aff::Options,
+}
+
+impl<'options> DicParser<'options> {
+	fn parse(self, i: &str) -> Result<DicFile, InitializeError> {
+		let parser_err = |e: nom::Err<nom::error::Error<_>>| InitializeError::Parser(e.to_string());
+
+		let (i, _nb_of_lines) = u64_p.terminated(newline).parse(i).map_err(parser_err)?;
+		let (_, stems) = many0(|i| self.parse_entry(i))
+			.all_consuming()
+			.parse(i)
+			.map_err(parser_err)?;
+
+		let mut index = HashMap::default();
+		for s in &stems {
+			let entry: &mut Vec<Stem> = index.entry(s.root.clone()).or_default();
+			entry.push(s.clone());
+		}
+
+		Ok(DicFile { stems, index })
+	}
+
+	fn parse_entry<'a>(&'a self, i: &'a str) -> IResult<&'a str, Stem> {
+		let (i, (root, flags, data_fields)) = tuple((
+			// TODO: doesn't take into account escaped slashes
+			is_not(" /\n").map(ToOwned::to_owned),
+			tag("/")
+				.precedes(parse_flags(&self.options.flag_ty))
+				.opt()
+				.map(Option::unwrap_or_default),
+			Self::parse_data_fields,
+		))
+		.terminated(newline)
+		.parse(i)?;
+
+		let stem = Stem {
+			case: Casing::guess(&root),
+
+			root,
+			flags,
+			data_fields,
+		};
+
+		Ok((i, stem))
+	}
+
+	fn parse_data_fields(i: &str) -> IResult<&str, Vec<DataField>> {
+		many0(space1.precedes(DataField::parse))(i)
 	}
 }
 
@@ -53,26 +104,26 @@ impl fmt::Display for DicFile {
 }
 
 // TODO: smolstr? smolvec?
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Stem {
-	stem: String,
-	flags: Vec<Flag>,
-	data: Vec<DataField>,
+	root: String,
+	pub(crate) flags: Vec<Flag>,
+	data_fields: Vec<DataField>,
 	// alt_spelling
 	case: Casing,
 }
 
 impl fmt::Display for Stem {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{}", self.stem)?;
+		write!(f, "{}", self.root)?;
 		if !self.flags.is_empty() {
 			write!(f, "/")?;
 			for flag in &self.flags {
 				write!(f, "{flag}")?;
 			}
 		}
-		if !self.data.is_empty() {
-			for data in &self.data {
+		if !self.data_fields.is_empty() {
+			for data in &self.data_fields {
 				write!(f, " {data}")?;
 			}
 		};
@@ -80,65 +131,8 @@ impl fmt::Display for Stem {
 	}
 }
 
-fn parse_flags(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + '_ {
-	move |i: &str| match fty {
-		FlagType::Short | FlagType::Long | FlagType::Utf8 => many1(parse_flag(fty))(i),
-		FlagType::Numeric => separated_list1(tag(","), parse_flag(fty))(i),
-	}
-}
-
-fn letter(i: &str) -> IResult<&str, char> {
-	let t = i.chars().next().ok_or_else(|| {
-		fail::<&str, char, nom::error::Error<&str>>(i).expect_err("just constructed an error")
-	})?;
-	if t == '\\' {
-		Ok((
-			&i[2..],
-			i.chars().nth(1).ok_or_else(|| {
-				fail::<&str, char, nom::error::Error<&str>>(i)
-					.expect_err("just constructed an error")
-			})?,
-		))
-	} else {
-		none_of("\"")(i)
-	}
-}
-
-fn parse_stem_and_flags(
-	fty: &FlagType,
-) -> impl Fn(&str) -> IResult<&str, (String, Vec<Flag>)> + '_ {
-	move |i: &str| {
-		// TODO: doesn't take into account escaped slashes
-		let (i, stem) = is_not(" /\n").parse(i)?;
-		let (i, flags) = tag("/").precedes(parse_flags(fty)).opt().parse(i)?;
-
-		Ok((i, (stem.to_owned(), flags.unwrap_or_default())))
-	}
-}
-
-fn parse_data_fields(i: &str) -> IResult<&str, Vec<DataField>> {
-	many0(space1.precedes(DataField::parse))(i)
-}
-
-fn parse_entry(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Stem> + '_ {
-	move |i| {
-		let (i, (stem, flags)) = parse_stem_and_flags(fty)(i)?;
-		let (i, data) = parse_data_fields.terminated(newline).parse(i)?;
-
-		let stem = Stem {
-			case: Casing::guess(&stem),
-
-			stem,
-			flags,
-			data,
-		};
-
-		Ok((i, stem))
-	}
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum Casing {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Casing {
 	/// All lowercase (“foo”)
 	No,
 	/// Titlecase, only initial letter is capitalized (“Foo”)
@@ -146,13 +140,17 @@ enum Casing {
 	/// All uppercase (“FOO”)
 	All,
 	/// Mixed capitalization (“fooBar”)
+	///
+	/// `HUH`
 	Huh,
 	/// Mixed capitalization, first letter is capitalized (“FooBar”)
+	///
+	/// `HUHINIT`
 	HuhInit,
 }
 
 impl Casing {
-	fn guess(s: &str) -> Self {
+	pub(crate) fn guess(s: &str) -> Self {
 		let first_char_is_upper = s.chars().next().is_some_and(char::is_uppercase);
 		let chars = s.chars().skip(1);
 
@@ -185,7 +183,7 @@ pub(crate) enum DataField {
 	TerminalPrefix(String),
 
 	SurfacePrefix(String),
-	PartsOfCoumpound(String),
+	PartsOfCompound(String),
 }
 
 impl DataField {
@@ -209,7 +207,7 @@ impl DataField {
 			"tp" => map(till_space, Self::TerminalPrefix)(i),
 
 			"sp" => map(till_space, Self::SurfacePrefix)(i),
-			"pa" => map(till_space, Self::PartsOfCoumpound)(i),
+			"pa" => map(till_space, Self::PartsOfCompound)(i),
 
 			_ => todo!("error out with invalid data field type"),
 		}
@@ -234,7 +232,7 @@ impl fmt::Display for DataField {
 			Self::TerminalPrefix(tp) => write!(f, "tp:{tp}"),
 
 			Self::SurfacePrefix(sp) => write!(f, "sp:{sp}"),
-			Self::PartsOfCoumpound(pa) => write!(f, "pa:{pa}"),
+			Self::PartsOfCompound(pa) => write!(f, "pa:{pa}"),
 		}
 	}
 }
@@ -273,7 +271,7 @@ mod tests {
 		test!("tp:hello" => TerminalPrefix(TEST_WORD.into()));
 
 		test!("sp:hello" => SurfacePrefix(TEST_WORD.into()));
-		test!("pa:hello" => PartsOfCoumpound(TEST_WORD.into()));
+		test!("pa:hello" => PartsOfCompound(TEST_WORD.into()));
 
 		Ok(())
 	}
@@ -283,7 +281,7 @@ mod tests {
 		use DataField::*;
 		macro_rules! test {
 			($source:literal => $res:expr) => {{
-				let (i, s) = parse_data_fields($source)?;
+				let (i, s) = DicParser::parse_data_fields($source)?;
 				assert_eq!(s.as_slice(), $res.as_slice());
 				assert_eq!(i, "");
 			}};
@@ -298,20 +296,24 @@ mod tests {
 	}
 
 	#[test]
+	#[allow(clippy::unnecessary_wraps)]
 	fn can_parse_entry() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
 		use DataField::*;
 		macro_rules! test {
 			($source:literal -> $res:expr) => {{
-				let (i, s) = parse_entry(&FlagType::Short)($source)?;
+				let dic = DicParser {
+					options: &aff::Options::default(),
+				};
+				let (i, s) = dic.parse_entry($source).unwrap();
 				assert_eq!(s, $res);
 				assert_eq!(i, "");
 			}};
 		}
 
 		test!("word/FGS ph:hello\n" -> super::Stem {
-			stem: "word".into(),
+			root: "word".into(),
 			flags: vec![Flag::Short('F'), Flag::Short('G'), Flag::Short('S')],
-			data: vec![Alternative(TEST_WORD.into())],
+			data_fields: vec![Alternative(TEST_WORD.into())],
 			case: Casing::No,
 		});
 

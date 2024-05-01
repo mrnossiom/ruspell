@@ -51,6 +51,7 @@
               pkg-config
               rust-toolchain
               act
+              typos
             ];
             buildInputs = with pkgs; [ ];
 
