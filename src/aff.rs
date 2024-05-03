@@ -1,3 +1,8 @@
+//! Logic to parse and represent `.aff` files.
+//!
+//! - Final represnetation is [`AffFile`]
+//! - Parsing logic is implemented in [`AffParser`], entrupoint is [`AffParser::parse`]
+
 use crate::trie::Trie;
 use crate::{dic::DataField, dictionary::InitializeError};
 use nom::IResult;
@@ -16,16 +21,26 @@ use std::borrow::Cow;
 use std::fmt;
 use std::{fmt::Debug, fs::File, io::Read, marker::PhantomData, path::Path, str::FromStr};
 
+/// An `.aff` file.
+/// Holds defined options, additional flags and affixes with an index each.
 pub(crate) struct AffFile {
+	/// Additional options
 	pub(crate) options: Options,
+	/// Flags others than affixes
+	pub(crate) additional_flags: AdditionalFlags,
 
 	// TODO: do a self-referencing struct
+	/// Holds every prefix
 	prefixes: Vec<Affix<Prefix>>,
+	/// A trie that maps prefixes.
+	///
+	/// Simplifies a lot the production of prefix forms during lookup.
+	/// See [`Dictionary::produce_prefix_and_cross_forms`](crate::Dictionary::produce_prefix_and_cross_forms).
 	pub(crate) prefix_index: Trie<Affix<Prefix>>,
+	/// Holds every suffix
 	suffixes: Vec<Affix<Suffix>>,
+	/// A trie that maps reversed suffixes
 	pub(crate) suffix_index: Trie<Affix<Suffix>>,
-
-	pub(crate) additional_flags: AdditionalFlags,
 }
 
 // pub type IResult<I, O, E = ParserError<I>> = Result<(I, O), nom::Err<E>>;
@@ -36,6 +51,7 @@ pub(crate) struct AffFile {
 // }
 
 impl AffFile {
+	/// Initializes a new [`AffFile`] from raw content
 	pub(crate) fn new(content: &str) -> Result<Self, InitializeError> {
 		let AffParser {
 			options,
@@ -66,14 +82,15 @@ impl AffFile {
 
 		Ok(Self {
 			options,
+			additional_flags,
 			prefixes,
 			prefix_index,
 			suffixes,
 			suffix_index,
-			additional_flags,
 		})
 	}
 
+	/// Initializes a new [`AffFile`] from a file
 	pub(crate) fn file(path: &Path) -> Result<Self, InitializeError> {
 		let mut file = File::open(path)?;
 		let mut buffer = String::new();
@@ -84,6 +101,7 @@ impl AffFile {
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
+/// Additional options defined in `.aff` file
 pub(crate) struct Options {
 	/// `SET`
 	encoding: Encoding,
@@ -171,6 +189,7 @@ pub(crate) struct Options {
 }
 
 #[derive(Debug, Default)]
+/// Flags that are not affixes but define additional behaviour
 pub(crate) struct AdditionalFlags {
 	// ——— for suggestions
 	/// `NOSUGGEST`
@@ -219,20 +238,28 @@ pub(crate) struct AdditionalFlags {
 	word_chars: Option<Flag>,
 }
 
+/// A lang identifier (e.g. `fr_FR`, `en_US`)
 #[derive(Debug)]
 pub(crate) struct Lang(String);
+
 #[derive(Debug)]
 pub(crate) struct Pattern;
 
+/// Encoding specified in `.aff` file
 #[derive(Debug, Default)]
 enum Encoding {
+	/// `UTF-8`
 	#[default]
 	Utf8,
-	// Can be 1-10, 13-15
+	/// `ISO8859-{i}` where `i` can be 1-10, 13-15
 	Iso8859(u16),
+	/// `KOI8-R`
 	Koi8R,
+	/// `KOI8-U`
 	Koi8U,
+	/// `cp1251`
 	Cp1251,
+	/// `ISCII-DEVANAGARI`
 	IsciiDevanagari,
 }
 
@@ -265,8 +292,10 @@ impl FromStr for Encoding {
 	}
 }
 
+/// Is only used to define  [`Affix`]
 #[derive(Debug, Clone)]
 pub(crate) struct Prefix;
+/// Is only used to define [`Affix`]
 #[derive(Debug, Clone)]
 pub(crate) struct Suffix;
 
@@ -281,15 +310,22 @@ pub(crate) struct Suffix;
 // TODO: they have flags too?
 #[derive(Debug, Clone)]
 pub(crate) struct Affix<T> {
+	/// Flag that identifies this affix in `.dic` files
 	pub(crate) flag: Flag,
+	/// Does this affix supports cross product (being associated with other affixes)
 	pub(crate) cross_product: bool,
 
-	/// Is either the prefix of the suffix
+	/// Affix part added to stem
 	pub(crate) add: String,
+	/// What to strip to stem before adding affix part
 	pub(crate) strip: String,
+	/// Stem must meet condition before affix is applied
 	pub(crate) condition: Option<Regex>,
+	/// Associated metadata to further enhance suggestion and lookup
 	pub(crate) data_fields: Vec<DataField>,
 
+	/// `T` is either [`Prefix`] or [`Suffix`]. Specializes the affix, though
+	/// they share the same structure.
 	_affix_type: PhantomData<T>,
 }
 
@@ -331,6 +367,7 @@ impl fmt::Display for Affix<Suffix> {
 	}
 }
 
+// TODO: remove
 type AffixVariant = Vec<(
 	// stripping
 	String,
@@ -343,11 +380,12 @@ type AffixVariant = Vec<(
 )>;
 
 impl<T> Affix<T> {
+	/// Initialize a list of [`Affix`]es
 	fn new(flag: Flag, cross_product: bool, variant: AffixVariant) -> Vec<Self> {
 		variant
 			.into_iter()
 			.map(|(strip, affix, condition, data_fields)| Self {
-				flag: flag.clone(),
+				flag,
 				cross_product,
 				strip,
 				add: affix,
@@ -365,12 +403,16 @@ pub(crate) struct Replacement {
 	add: String,
 }
 
+/// Used for input and output conversion tables (`OCONV`, `ICONV`) which normalizes
+/// some characters for lookup.
 #[derive(Debug, Default)]
 pub(crate) struct ConversionTable {
+	/// Inner normalize table
 	replacements: Vec<(Regex, String)>,
 }
 
 impl ConversionTable {
+	/// Used to construct a [`ConversionTable`]
 	fn add(&mut self, pattern: &str, rep: &str) {
 		let mut boundairies = (false, false);
 
@@ -398,12 +440,9 @@ impl ConversionTable {
 		self.replacements.push((pat, rep));
 	}
 
-	fn len(&self) -> usize {
-		self.replacements.len()
-	}
-
-	pub(crate) fn convert(&self, word: &str) -> String {
-		let mut word = Cow::Borrowed(word);
+	/// Normalizes the string
+	pub(crate) const fn convert<'a>(&'a self, word: &'a str) -> Cow<'_, str> {
+		let word = Cow::Borrowed(word);
 
 		// TODO
 
@@ -422,19 +461,26 @@ impl ConversionTable {
 		// 	};
 		// }
 
-		word.to_string()
+		word
 	}
 }
 
+/// Parses an `.aff` file
 #[derive(Default)]
 struct AffParser {
+	/// Parsed options
 	pub(crate) options: Options,
-	pub(crate) prefixes: Vec<Affix<Prefix>>,
-	pub(crate) suffixes: Vec<Affix<Suffix>>,
+	/// Parsed additional flags
 	pub(crate) additional_flags: AdditionalFlags,
+
+	/// Every parsed prefix
+	pub(crate) prefixes: Vec<Affix<Prefix>>,
+	/// Every parsed suffix
+	pub(crate) suffixes: Vec<Affix<Suffix>>,
 }
 
 impl AffParser {
+	/// Entrypoint to parse an `.aff` file into a [`AffFile`]
 	fn parse(mut self, content: &str) -> Result<Self, InitializeError> {
 		many1(alt((
 			Self::parse_directive(&mut self),
@@ -757,7 +803,7 @@ impl AffParser {
 
 				"ICONV" => {
 					let (i, num) = u64_p.terminated(newline).parse(i)?;
-					let (i, mut conversions) = many_m_n(
+					let (i, conversions) = many_m_n(
 						usize::try_from(num).unwrap(),
 						usize::try_from(num).unwrap(),
 						move |i: &'a str| -> IResult<&'a str, (&'a str, &'a str)> {
@@ -776,7 +822,7 @@ impl AffParser {
 				}
 				"OCONV" => {
 					let (i, num) = terminated(u64_p, newline)(i)?;
-					let (i, mut conversions) = many_m_n(
+					let (i, conversions) = many_m_n(
 						usize::try_from(num).unwrap(),
 						usize::try_from(num).unwrap(),
 						|i: &'a str| -> IResult<&'a str, (&'a str, &'a str)> {
@@ -827,6 +873,7 @@ impl AffParser {
 		}
 	}
 
+	/// Parse a cross product character
 	fn parse_cross_product(s: &str) -> Option<bool> {
 		match s {
 			"Y" => Some(true),
@@ -835,6 +882,7 @@ impl AffParser {
 		}
 	}
 
+	/// Parse a flag
 	fn parse_flag(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Flag> + '_ {
 		move |i: &str| match &fty {
 			FlagType::Short => satisfy(|c| c.is_ascii() && !c.is_ascii_whitespace())
@@ -849,6 +897,7 @@ impl AffParser {
 		}
 	}
 
+	/// Parse a list of flags
 	fn parse_flags(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + '_ {
 		move |i: &str| match fty {
 			FlagType::Short | FlagType::Long | FlagType::Utf8 => many1(Self::parse_flag(fty))(i),
@@ -858,16 +907,30 @@ impl AffParser {
 }
 
 // Reexport to parse flags in the dictionary
+#[doc(hidden)]
 pub(crate) fn parse_flags(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + '_ {
 	AffParser::parse_flags(fty)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A flag in dictionary files, see
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Flag {
+	/// `short`: flag is a single ascii character
+	///
+	/// e.g. `A`
 	Short(char),
+	/// `long`: flag is defined as two ascii character
+	///
+	/// e.g. `AB`
 	Long([char; 2]),
+	/// `UTF-8`: flag can be any character from the utf8 set
+	///
+	/// e.g. `π`
 	Utf8(char),
-	// in 1-65000
+	/// `num`: flag is a number in 1-65000. Multiple flags are
+	/// separated by a comma.
+	///
+	/// e.g. `12345`
 	Numeric(u16),
 }
 
@@ -881,16 +944,19 @@ impl fmt::Display for Flag {
 	}
 }
 
+/// How flags sould be parsed.
+///
+/// See [`Flag`] to see all forms with examples
 #[derive(Debug, Clone, Default)]
 pub(crate) enum FlagType {
 	/// `short`
 	#[default]
 	Short,
-	// `long`
+	/// `long`
 	Long,
-	/// UTF-8
+	/// `UTF-8`
 	Utf8,
-	/// `num` (or `numeric`)
+	/// `num` (or `numeric`?)
 	Numeric,
 }
 
@@ -913,7 +979,7 @@ impl FromStr for FlagType {
 fn set_flag<T: Debug>(place: &mut Option<T>, flag: T) {
 	if let Some(old_flag) = place.replace(flag) {
 		// TODO: warn
-		todo!("warn: flag was replaced {:?}", old_flag)
+		todo!("warn: flag was replaced {old_flag:?}")
 	};
 }
 
@@ -922,20 +988,20 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn iconv_directive() -> Result<(), Box<dyn std::error::Error>> {
+	fn parse_iconv_directive() -> Result<(), Box<dyn std::error::Error>> {
 		let directive = "ICONV 1\nICONV ' `\n";
 		let mut parser = AffParser::default();
 
 		let remains = AffParser::parse_directive(&mut parser)(directive)?.0;
 		assert!(remains.is_empty());
 
-		assert!(parser.options.input_conversion.len() == 1);
+		assert!(parser.options.input_conversion.replacements.len() == 1);
 
 		Ok(())
 	}
 
 	#[test]
-	fn can_find_suffixes() -> Result<(), Box<dyn std::error::Error>> {
+	fn find_suffixes_in_index() -> Result<(), Box<dyn std::error::Error>> {
 		let directive = "
 SFX D Y 4
 SFX D   y     ied        [^aeiou]y

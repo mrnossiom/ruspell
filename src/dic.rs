@@ -1,3 +1,8 @@
+//! Logic to parse and represent `.dic` files.
+//!
+//! - Final represnetation is [`DicFile`]
+//! - Parsing logic is implemented in [`DicParser`], entrupoint is [`DicParser::parse`]
+
 use crate::{
 	aff::{self, parse_flags, Flag},
 	dictionary::InitializeError,
@@ -19,33 +24,46 @@ use std::{
 	path::Path,
 };
 
+/// A `.dic` file.
+/// Holds every stems and an index to them
 pub(crate) struct DicFile {
+	/// Stems found in `.dic` file
 	stems: Vec<Stem>,
+	/// Index to quickly find stem information based on a stem
 	index: HashMap<String, Vec<Stem>>,
 }
 
+/// Constructors
 impl DicFile {
+	/// Initialize a [`DicFile`] from raw content
 	pub(crate) fn new(content: &str, options: &aff::Options) -> Result<Self, InitializeError> {
 		DicParser { options }.parse(content)
 	}
 
+	/// Initialize a [`DicFile`] from a `.dic` file
 	pub(crate) fn file(path: &Path, options: &aff::Options) -> Result<Self, InitializeError> {
 		let mut file = File::open(path)?;
 		let mut buffer = String::new();
 		file.read_to_string(&mut buffer)?;
 		Self::new(&buffer, options)
 	}
+}
 
+impl DicFile {
+	/// Returns every stem registered in a dictionary and its metadata
 	pub(crate) fn homonyms<'a>(&'a self, stem: &'a str) -> impl Iterator<Item = &Stem> + 'a {
 		self.index.get(stem).into_iter().flatten()
 	}
 }
 
-struct DicParser<'options> {
-	options: &'options aff::Options,
+/// Parses a [`DicFile`]
+struct DicParser<'op> {
+	/// Options from an `.aff` file to correctly parse `.dic` file
+	options: &'op aff::Options,
 }
 
-impl<'options> DicParser<'options> {
+impl<'op> DicParser<'op> {
+	/// Entrypoint of [`DicParser`]
 	fn parse(self, i: &str) -> Result<DicFile, InitializeError> {
 		let parser_err = |e: nom::Err<nom::error::Error<_>>| InitializeError::Parser(e.to_string());
 
@@ -64,6 +82,7 @@ impl<'options> DicParser<'options> {
 		Ok(DicFile { stems, index })
 	}
 
+	/// Parse a single stem line
 	fn parse_entry<'a>(&'a self, i: &'a str) -> IResult<&'a str, Stem> {
 		let (i, (root, flags, data_fields)) = tuple((
 			// TODO: doesn't take into account escaped slashes
@@ -88,8 +107,36 @@ impl<'options> DicParser<'options> {
 		Ok((i, stem))
 	}
 
+	/// Parse stem associated data fields
 	fn parse_data_fields(i: &str) -> IResult<&str, Vec<DataField>> {
-		many0(space1.precedes(DataField::parse))(i)
+		many0(space1.precedes(Self::parse_data_field))(i)
+	}
+
+	/// Parse a single data field
+	fn parse_data_field(i: &str) -> IResult<&str, DataField> {
+		let (i, discriminant) = take(2usize).terminated(tag(":")).parse(i)?;
+
+		let till_space = map(is_not(" \n"), ToString::to_string);
+
+		match discriminant {
+			"ph" => map(till_space, DataField::Alternative)(i),
+			"st" => map(till_space, DataField::Stem)(i),
+			"al" => map(till_space, DataField::Allomorph)(i),
+			"po" => map(till_space, DataField::PartOfSpeech)(i),
+
+			"ds" => map(till_space, DataField::DerivationalSuffix)(i),
+			"is" => map(till_space, DataField::InflectionalSuffix)(i),
+			"ts" => map(till_space, DataField::TerminalSuffix)(i),
+
+			"dp" => map(till_space, DataField::DerivationalPrefix)(i),
+			"ip" => map(till_space, DataField::InflectionalPrefix)(i),
+			"tp" => map(till_space, DataField::TerminalPrefix)(i),
+
+			"sp" => map(till_space, DataField::SurfacePrefix)(i),
+			"pa" => map(till_space, DataField::PartsOfCompound)(i),
+
+			_ => todo!("error out with invalid data field type"),
+		}
 	}
 }
 
@@ -104,12 +151,18 @@ impl fmt::Display for DicFile {
 }
 
 // TODO: smolstr? smolvec?
+/// A single stem with its metadata
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Stem {
+	/// Word root
 	root: String,
+	/// Associated flags (affix and options flags)
+	// TODO: link to certain options e.g. `FORBIDDENFLAG`
 	pub(crate) flags: Vec<Flag>,
+	/// Associated metadata
 	data_fields: Vec<DataField>,
 	// alt_spelling
+	/// Word root casing
 	case: Casing,
 }
 
@@ -131,6 +184,7 @@ impl fmt::Display for Stem {
 	}
 }
 
+/// Casing of a word
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Casing {
 	/// All lowercase (“foo”)
@@ -150,6 +204,7 @@ pub(crate) enum Casing {
 }
 
 impl Casing {
+	/// Based on input, guess with a simple algorithm the casing
 	pub(crate) fn guess(s: &str) -> Self {
 		let first_char_is_upper = s.chars().next().is_some_and(char::is_uppercase);
 		let chars = s.chars().skip(1);
@@ -166,52 +221,48 @@ impl Casing {
 }
 
 // TODO: use &str
+/// A single metadata associated to a [`Stem`]
+///
+/// Each enum member defines which is the identifier of the data field
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DataField {
+	/// `ph`: common misspellings of a word to provide better suggestions.
+	///
+	/// Hunspell manual: ...
+	///
+	/// Note: `ph` fields are then inserted in the [`aff::Options::replacements`] table.
 	Alternative(String),
+	/// `st`: ?
 	Stem(String),
+	// TODO: check
+	/// `al`: used in the `metaphone` part of the suggest workflow?
+	///
+	/// Hunspell manual: A dictionary item is the stem of its allomorphs.
+	/// Morphological generation needs stem, allomorph and affix fields.
+	///
+	/// Note: rare apparitions in dictionaries
 	Allomorph(String),
+	/// `po`: hints the nature of a word in a sentence (e.g. noun, verb). Used to analyze words.
 	PartOfSpeech(String),
 
+	/// `ds`: ?
 	DerivationalSuffix(String),
+	/// `is`: ?
 	InflectionalSuffix(String),
+	/// `ts`: ?
 	TerminalSuffix(String),
 
-	// There are reserved but not used
+	/// \[RESERVED] `dp`: ?
 	DerivationalPrefix(String),
+	/// \[RESERVED] `ip`: ?
 	InflectionalPrefix(String),
+	/// \[RESERVED] `tp`: ?
 	TerminalPrefix(String),
 
+	/// `sp`: ?
 	SurfacePrefix(String),
+	/// `pa`: ?
 	PartsOfCompound(String),
-}
-
-impl DataField {
-	fn parse(i: &str) -> IResult<&str, Self> {
-		let (i, discriminant) = take(2usize).terminated(tag(":")).parse(i)?;
-
-		let till_space = map(is_not(" \n"), ToString::to_string);
-
-		match discriminant {
-			"ph" => map(till_space, Self::Alternative)(i),
-			"st" => map(till_space, Self::Stem)(i),
-			"al" => map(till_space, Self::Allomorph)(i),
-			"po" => map(till_space, Self::PartOfSpeech)(i),
-
-			"ds" => map(till_space, Self::DerivationalSuffix)(i),
-			"is" => map(till_space, Self::InflectionalSuffix)(i),
-			"ts" => map(till_space, Self::TerminalSuffix)(i),
-
-			"dp" => map(till_space, Self::DerivationalPrefix)(i),
-			"ip" => map(till_space, Self::InflectionalPrefix)(i),
-			"tp" => map(till_space, Self::TerminalPrefix)(i),
-
-			"sp" => map(till_space, Self::SurfacePrefix)(i),
-			"pa" => map(till_space, Self::PartsOfCompound)(i),
-
-			_ => todo!("error out with invalid data field type"),
-		}
-	}
 }
 
 impl fmt::Display for DataField {
@@ -244,11 +295,11 @@ mod tests {
 	const TEST_WORD: &str = "hello";
 
 	#[test]
-	fn can_parse_every_data_field_form() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
+	fn parse_every_data_field_form() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
 		macro_rules! test {
 			($source:literal => $res:expr) => {{
 				use DataField::*;
-				let (i, df) = DataField::parse($source)?;
+				let (i, df) = DicParser::parse_data_field($source)?;
 				assert_eq!(df, $res);
 				assert_eq!(i, "");
 			}};
@@ -277,7 +328,7 @@ mod tests {
 	}
 
 	#[test]
-	fn can_parse_data_field_list() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
+	fn parse_data_field_list() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
 		use DataField::*;
 		macro_rules! test {
 			($source:literal => $res:expr) => {{
@@ -297,7 +348,7 @@ mod tests {
 
 	#[test]
 	#[allow(clippy::unnecessary_wraps)]
-	fn can_parse_entry() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
+	fn parse_entry() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
 		use DataField::*;
 		macro_rules! test {
 			($source:literal -> $res:expr) => {{

@@ -1,3 +1,5 @@
+//! Logic of the [`Dictionary`] to validate a word
+
 use crate::{
 	aff::{Affix, Prefix, Suffix},
 	dic::{Casing, Stem},
@@ -5,10 +7,15 @@ use crate::{
 };
 use std::{fmt, iter};
 
+/// Maximum word length to check
+//
+/// This limit is the same in `Hunspell`, it's arbitrary
 const WORD_LOOKUP_MAX_LENGTH: usize = 100;
 
+/// Informs why a malformed word has been refused or failed to lookup
 #[derive(Debug, thiserror::Error)]
 pub enum LookupError {
+	/// Word is too long and makes no sense to check
 	#[error("word should not be over {} bytes long", WORD_LOOKUP_MAX_LENGTH)]
 	WordTooLong,
 }
@@ -82,7 +89,7 @@ impl Dictionary {
 		let mut forms = vec![];
 
 		// For every form that could exist, we check it's validity
-		for form in self.produce_affix_forms(word) {
+		for form in self.produce_affix_forms(word).inspect(|w| println!("{w}")) {
 			// TODO: forbidden
 
 			// Only accept words that appear in the dictionary
@@ -96,6 +103,7 @@ impl Dictionary {
 		forms
 	}
 
+	/// Wether the given [`AffixForm`] would match current [`Stem`] definition
 	fn is_valid_affix_form(&self, form: &AffixForm, entry: &Stem) -> bool {
 		// TODO: no suggest flag
 
@@ -118,7 +126,9 @@ impl Dictionary {
 		true
 	}
 
+	/// Produce every possible [`AffixForm`], it will be validated by [`Dictionary::is_valid_affix_form`] after
 	fn produce_affix_forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = AffixForm> + '_ {
+		// whole word without affixes is one possible form
 		let whole_word = AffixForm::new(word, None, None);
 
 		iter::once(whole_word)
@@ -166,6 +176,7 @@ impl Dictionary {
 		forms.into_iter()
 	}
 
+	/// Produce prefix [`AffixForm`]s and cross product [`AffixForm`]s which has both a prefix and a suffix
 	fn produce_prefix_and_cross_forms<'a>(
 		&'a self,
 		word: &'a str,
@@ -187,6 +198,7 @@ impl Dictionary {
 			})
 	}
 
+	/// Produce suffix [`AffixForm`]s
 	fn produce_suffix_forms<'a>(
 		&'a self,
 		word: &'a str,
@@ -210,8 +222,10 @@ impl Dictionary {
 					true
 				}
 			})
+			.inspect(|s| println!("{s}"))
 			// TODO: check for sub on s.add replace with strip
 			.filter(|s| s.condition.clone().map_or(true, |r| r.is_match(word)))
+			.inspect(|s| println!("{s}"))
 			.map(move |suffix| {
 				prefix.as_ref().map_or_else(
 					|| AffixForm::new(word, None, Some(suffix.clone())),
@@ -238,12 +252,18 @@ enum WordForm {
 	Compound(CompoundForm),
 }
 
+/// A form a word can be split into with a optional prefix and an optional suffix
 #[derive(Debug, Clone)]
 struct AffixForm {
+	/// Source text
 	text: String,
 
+	// TODO: slices of [`text`]
+	/// stem as it may exists in dictionary
 	stem: String,
+	/// a optional prefix
 	prefix: Option<Affix<Prefix>>,
+	/// a optional suffix
 	suffix: Option<Affix<Suffix>>,
 }
 

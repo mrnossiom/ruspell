@@ -1,16 +1,27 @@
+//! High level interface to query dictionary pairs
+//!
+//! Entrypoint methods are
+//! - [`Dictionary::lookup`]: looks though the dictionary to check is word is valid
+//! - [`Dictionary::suggest`]: tries to find words close to provide quick/auto-correction
+
 use crate::{aff::AffFile, dic::DicFile};
 use std::{io, path::Path};
 
 pub struct Dictionary {
+	/// Underlying `.aff` file
 	pub(crate) aff: AffFile,
+	/// Underlying `.dic` file
 	pub(crate) dic: DicFile,
 }
 
+/// Ways initializing a [`Dictionary`] could go wrong
 #[derive(Debug, thiserror::Error)]
 pub enum InitializeError {
+	/// Could not parse either `.aff` or `.dic` file
 	#[error("Could not parse file: {0}")]
 	Parser(String),
 
+	/// Could not correctly open given files
 	#[error(transparent)]
 	Io(#[from] io::Error),
 }

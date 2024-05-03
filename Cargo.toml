@@ -19,8 +19,9 @@ nursery = "warn"
 pedantic = "warn"
 cargo = "warn"
 
+missing_docs = "warn"
 dbg_macro = "warn"
-# missing_docs_in_private_items = "warn"
+missing_docs_in_private_items = "warn"
 todo = "warn"
 unwrap_used = "warn"
 
