@@ -39,7 +39,6 @@ const FULLSTRIP_GOOD: [&str; 8] = [
 ];
 
 #[test]
-#[ignore]
 fn fullstrip() -> Result<(), Box<dyn std::error::Error>> {
 	let dict = Dictionary::from_slice(FULLSTRIP_AFF, FULLSTRIP_DIC)?;
 

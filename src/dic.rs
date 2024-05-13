@@ -218,6 +218,34 @@ impl Casing {
 			true => Self::Huh,
 		}
 	}
+
+	/// Produces every possible casing variant based on input casing
+	pub(crate) fn variants(&self, word: String) -> Vec<String> {
+		match self {
+			Self::No | Self::Huh => vec![word],
+			Self::Init => vec![word.to_lowercase(), word],
+			Self::All => vec![Self::capitalize(&word), word.to_lowercase(), word],
+			Self::HuhInit => vec![Self::lower_first(&word), word],
+		}
+	}
+
+	/// Makes the first letter uppercase then the others lowercase
+	fn capitalize(word: &str) -> String {
+		let mut c = word.chars();
+		let mut s = c
+			.next()
+			.map_or_else(String::new, |f| f.to_uppercase().collect::<String>());
+		s.push_str(&c.as_str().to_lowercase());
+		s
+	}
+
+	/// Makes the first character lowercase
+	fn lower_first(word: &str) -> String {
+		let mut c = word.chars();
+		c.next().map_or_else(String::new, |f| {
+			f.to_lowercase().collect::<String>() + c.as_str()
+		})
+	}
 }
 
 // TODO: use &str
@@ -237,7 +265,7 @@ pub(crate) enum DataField {
 	// TODO: check
 	/// `al`: used in the `metaphone` part of the suggest workflow?
 	///
-	/// Hunspell manual: A dictionary item is the stem of its allomorphs.
+	/// Hunspell manual: A dictionarwordy item is the stem of its allomorphs.
 	/// Morphological generation needs stem, allomorph and affix fields.
 	///
 	/// Note: rare apparitions in dictionaries

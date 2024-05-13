@@ -20,12 +20,15 @@ pub enum LookupError {
 	WordTooLong,
 }
 
+// IDEA: bring log to have insight on every step of stemming, lookup and suggestion
+// could help to find bugs
+
 /// Methods for querying the dictionary
 impl Dictionary {
 	/// # Errors
 	/// Check [`LookupError`] to see all the ways this function breaks
 	pub fn lookup(&self, word: &str) -> Result<bool, LookupError> {
-		// TODO: check max word length (hunspell's a 100)
+		// TODO: check max word length (hunspell's 360)
 		if word.len() > WORD_LOOKUP_MAX_LENGTH {
 			return Err(LookupError::WordTooLong);
 		}
@@ -37,46 +40,68 @@ impl Dictionary {
 			}
 		}
 
-		let word = self.aff.options.input_conversion.convert(word);
+		// Trim blanks around word
+		let word = word.trim();
+		// Remove abbreviation dot at the the end
+		let (word, _abbreviation) = match &word[word.len() - 1..] {
+			"." => (&word[..word.len() - 1], true),
+			_ => (word, false),
+		};
+		let word = word.trim_end_matches(|c: char| c == '.');
 
-		let word = word.trim_matches(|c: char| c.is_whitespace() && c == '.');
-		// TODO: make input conversion
+		// TODO: do we care about alloc for small strings?
+		let mut word = word.to_owned();
 
-		// TODO: clean word (e.g strip blanks)
+		// Input conversion based on the `ICONV` table
+		self.aff.options.input_conversion.convert(&mut word);
+		// Erase ignored charactes as the specified by the `IGNORE` table
+		self.aff.options.ignore.erase(&mut word);
 
-		// TODO: detect capitalization type
+		// Check for numbers separated with dashes, dots and commas
+		if Self::is_number(&word) {
+			return Ok(true);
+		}
 
-		// TODO: check for numbers separated with dashes, dots and commas (sounds like a job for nom)
+		let valid_form_exists = self
+			.break_word(&word)
+			.find_map(|mut forms| forms.find_map(|p| self.forms(p).next()))
+			.is_some();
 
-		// TODO: check word for all capitalisation types
+		Ok(valid_form_exists)
+	}
 
-		// TODO: split word
-		let parts = vec![word];
+	/// Break the input word in every possble way as defined by the `BREAK` directive
+	fn break_word<'a>(
+		&self,
+		word: &'a str,
+	) -> impl Iterator<Item = impl Iterator<Item = &'a str>> + 'a {
+		let break_possibilites = iter::once(vec![word].into_iter());
 
-		let x = Ok(parts
-			.into_iter()
-			.flat_map(|p| self.forms(p))
-			.next()
-			.is_some());
-		x
+		for pattern in &self.aff.options.compound_split_points {
+			todo!()
+		}
+
+		break_possibilites
 	}
 
 	/// Return every valid form of this word as is could be interpreted by the dictionary
 	fn forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = WordForm> + 'a {
-		// capitalisation
-		let (cap, forms) = if false {
-			todo!("check form for all caps type");
-		// return Err(LookupError::WordTooLong);
+		// TODO: detect capitalization type, check word for all capitalisation types
+		let word_casing = Casing::guess(word);
+		let capitalisation = true;
+		let (cap, forms) = if capitalisation {
+			let variants = word_casing.variants(word.to_owned());
+			(word_casing, variants)
 		} else {
-			(Casing::guess(word), vec![word])
+			(word_casing, vec![word.to_owned()])
 		};
 
 		forms.into_iter().flat_map(|form| {
-			self.affix_forms(form)
+			self.affix_forms(&form)
 				.into_iter()
 				.map(WordForm::Affix)
 				.chain(
-					self.compound_forms(form)
+					self.compound_forms(&form)
 						.into_iter()
 						.map(WordForm::Compound),
 				)
@@ -89,7 +114,7 @@ impl Dictionary {
 		let mut forms = vec![];
 
 		// For every form that could exist, we check it's validity
-		for form in self.produce_affix_forms(word).inspect(|w| println!("{w}")) {
+		for form in self.produce_affix_forms(word).inspect(|f| eprintln!("{f}")) {
 			// TODO: forbidden
 
 			// Only accept words that appear in the dictionary
@@ -138,6 +163,7 @@ impl Dictionary {
 
 	// this is an alternative impl to spylls that only searches the affixes once to then combine them
 	// TODO: bench and choose
+	/// Produce every possible [`AffixForm`], it will be validated by [`Dictionary::is_valid_affix_form`] after
 	fn produce_affix_forms_two<'a>(
 		&'a self,
 		word: &'a str,
@@ -222,10 +248,13 @@ impl Dictionary {
 					true
 				}
 			})
-			.inspect(|s| println!("{s}"))
 			// TODO: check for sub on s.add replace with strip
-			.filter(|s| s.condition.clone().map_or(true, |r| r.is_match(word)))
-			.inspect(|s| println!("{s}"))
+			.filter(|s| {
+				let mut word = word.strip_suffix(&s.add).unwrap().to_owned();
+				word.push_str(&s.strip);
+
+				s.condition.clone().map_or(true, |r| r.is_match(&word))
+			})
 			.map(move |suffix| {
 				prefix.as_ref().map_or_else(
 					|| AffixForm::new(word, None, Some(suffix.clone())),
@@ -245,11 +274,41 @@ impl Dictionary {
 	fn compound_forms(&self, word: &str) -> Vec<CompoundForm> {
 		vec![]
 	}
+
+	/// Checks if `word` is only composed of digits and separators (`-,.`)
+	/// that don't follow each other.
+	fn is_number(word: &str) -> bool {
+		let mut previous_is_sep = false;
+
+		if word.is_empty() {
+			return false;
+		}
+
+		for char_ in word.chars() {
+			match char_ {
+				'0'..='9' => previous_is_sep = false,
+				'-' | '.' | ',' if !previous_is_sep => previous_is_sep = true,
+				_ => return false,
+			}
+		}
+
+		true
+	}
 }
 
+/// A valid composed word form as understood by a diticonaru
 enum WordForm {
 	Affix(AffixForm),
 	Compound(CompoundForm),
+}
+
+impl fmt::Display for WordForm {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Affix(a) => write!(f, "{a}"),
+			Self::Compound(c) => write!(f, "{c}"),
+		}
+	}
 }
 
 /// A form a word can be split into with a optional prefix and an optional suffix
@@ -332,3 +391,9 @@ impl fmt::Display for AffixForm {
 }
 
 struct CompoundForm {}
+
+impl fmt::Display for CompoundForm {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "CompoundForm[]")
+	}
+}

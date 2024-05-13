@@ -93,7 +93,6 @@ const BASE_WRONG_SUGG: [&str; 11] = [
 ];
 
 #[test]
-#[ignore]
 fn base() -> Result<(), Box<dyn std::error::Error>> {
 	let dict = Dictionary::from_slice(BASE_AFF, BASE_DIC)?;
 
@@ -107,7 +106,7 @@ fn base() -> Result<(), Box<dyn std::error::Error>> {
 			eprintln!("{ww} is supposed to be fine but is wrong");
 		});
 
-	BASE_GOOD
+	BASE_WRONG
 		.into_iter()
 		.filter(|w| dict.lookup(w).unwrap_or_default())
 		.for_each(|ww| {

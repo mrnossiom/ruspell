@@ -3,9 +3,7 @@
 //! - Final represnetation is [`AffFile`]
 //! - Parsing logic is implemented in [`AffParser`], entrupoint is [`AffParser::parse`]
 
-use crate::trie::Trie;
-use crate::{dic::DataField, dictionary::InitializeError};
-use nom::IResult;
+use crate::{dic::DataField, dictionary::InitializeError, trie::Trie};
 use nom::{
 	branch::alt,
 	bytes::complete::{is_not, tag, take, take_while1},
@@ -13,13 +11,18 @@ use nom::{
 	combinator::map,
 	multi::{many1, many_m_n, separated_list1},
 	sequence::{delimited, preceded, terminated, tuple},
-	Parser,
+	IResult, Parser,
 };
 use nom_supreme::ParserExt;
 use regex::Regex;
-use std::borrow::Cow;
-use std::fmt;
-use std::{fmt::Debug, fs::File, io::Read, marker::PhantomData, path::Path, str::FromStr};
+use std::{
+	fmt::{self, Debug},
+	fs::File,
+	io::Read,
+	marker::PhantomData,
+	path::Path,
+	str::FromStr,
+};
 
 /// An `.aff` file.
 /// Holds defined options, additional flags and affixes with an index each.
@@ -113,7 +116,7 @@ pub(crate) struct Options {
 	/// `LANG`
 	lang: Option<Lang>,
 	/// `IGNORE`
-	ignore: Vec<char>,
+	pub(crate) ignore: IgnoreList,
 	/// `AF`
 	/// Flags can be compressed and replaced with an ordinal number
 	flag_aliases: Vec<Flag>,
@@ -149,7 +152,7 @@ pub(crate) struct Options {
 
 	// ——— for compounding
 	/// `BREAK`
-	compound_split_points: Vec<String>,
+	pub(crate) compound_split_points: Vec<String>,
 	/// `COMPOUNDRULE`
 	compound_rules: Vec<String>,
 	/// `COMPOUNDMIN`
@@ -326,7 +329,7 @@ pub(crate) struct Affix<T> {
 
 	/// `T` is either [`Prefix`] or [`Suffix`]. Specializes the affix, though
 	/// they share the same structure.
-	_affix_type: PhantomData<T>,
+	kind: PhantomData<T>,
 }
 
 impl fmt::Display for Affix<Prefix> {
@@ -391,7 +394,7 @@ impl<T> Affix<T> {
 				add: affix,
 				condition,
 				data_fields,
-				_affix_type: PhantomData,
+				kind: PhantomData,
 			})
 			.collect()
 	}
@@ -441,8 +444,10 @@ impl ConversionTable {
 	}
 
 	/// Normalizes the string
-	pub(crate) const fn convert<'a>(&'a self, word: &'a str) -> Cow<'_, str> {
-		let word = Cow::Borrowed(word);
+	pub(crate) fn convert(&self, word: &mut String) {
+		if self.replacements.is_empty() {
+			return;
+		}
 
 		// TODO
 
@@ -460,8 +465,6 @@ impl ConversionTable {
 		// 		None => continue,
 		// 	};
 		// }
-
-		word
 	}
 }
 
@@ -532,7 +535,7 @@ impl AffParser {
 				}
 				"IGNORE" => {
 					let (i, chars) = chars_till_end(i)?;
-					(i, options.ignore = chars)
+					(i, options.ignore = IgnoreList(chars))
 				}
 				"AF" => {
 					options.flag_aliases = todo!("AG");
@@ -941,6 +944,15 @@ impl fmt::Display for Flag {
 			Self::Long([c1, c2]) => write!(f, "{c1}{c2}"),
 			Self::Numeric(num) => write!(f, "{num}"),
 		}
+	}
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct IgnoreList(Vec<char>);
+
+impl IgnoreList {
+	pub(crate) fn erase<'a>(&self, word: &mut String) {
+		word.retain(|c| !self.0.contains(&c));
 	}
 }
 
