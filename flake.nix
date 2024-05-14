@@ -58,7 +58,7 @@
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
             LD_LIBRARY_PATH = makeLibraryPath buildInputs;
 
-            RUST_LOG = "";
+            RUST_LOG = "debug";
 
             HUNSPELL_DICT = "${pkgs.hunspellDicts.en_US-large}/share/hunspell/en_US";
           };

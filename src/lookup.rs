@@ -20,8 +20,23 @@ pub enum LookupError {
 	WordTooLong,
 }
 
-// IDEA: bring log to have insight on every step of stemming, lookup and suggestion
-// could help to find bugs
+// TODO: move all lookup logic in `Lookup` struct, add small caches for homonym and trie lookup?
+
+/// Return the first item of the given iterator but can also fully evaluate
+/// further the iterator for debugging purposes
+fn eager_iter_first<T>(mut iter: impl Iterator<Item = T>) -> Option<T> {
+	let res = iter.next();
+
+	if cfg!(feature = "fully_evaluate") {
+		let mut iter = iter.peekable();
+		if iter.peek().is_some() {
+			log::debug!("continuing valid forms evaluation");
+			iter.for_each(drop);
+		}
+	}
+
+	res
+}
 
 /// Methods for querying the dictionary
 impl Dictionary {
@@ -34,118 +49,131 @@ impl Dictionary {
 		}
 
 		// Get plain forbidden words out of the way
-		if let Some(ff) = &self.aff.additional_flags.forbidden_word {
-			if self.dic.homonyms(word).any(|s| s.flags.contains(ff)) {
+		if let Some(fw_flag) = self.aff.additional_flags.forbidden_word {
+			if self.dic.homonyms(word).any(|s| s.flags.has_flag(&fw_flag)) {
 				return Ok(false);
 			}
 		}
 
+		log::debug!("lookup {word:?}");
+
 		// Trim blanks around word
 		let word = word.trim();
 		// Remove abbreviation dot at the the end
-		let (word, _abbreviation) = match &word[word.len() - 1..] {
-			"." => (&word[..word.len() - 1], true),
+		let (word, _abbreviation) = match &word.chars().next_back() {
+			Some('.') => (&word[..word.len() - 1], true),
 			_ => (word, false),
 		};
+		// TODO: add dot back
 		let word = word.trim_end_matches(|c: char| c == '.');
+
+		log::debug!("trimmed {word:?}");
 
 		// TODO: do we care about alloc for small strings?
 		let mut word = word.to_owned();
 
 		// Input conversion based on the `ICONV` table
 		self.aff.options.input_conversion.convert(&mut word);
-		// Erase ignored charactes as the specified by the `IGNORE` table
+		// Erase ignored characters as the specified by the `IGNORE` table
 		self.aff.options.ignore.erase(&mut word);
+
+		log::debug!("sanitized {word:?}");
 
 		// Check for numbers separated with dashes, dots and commas
 		if Self::is_number(&word) {
 			return Ok(true);
 		}
 
-		let valid_form_exists = self
+		let valid_forms = self
 			.break_word(&word)
-			.find_map(|mut forms| forms.find_map(|p| self.forms(p).next()))
-			.is_some();
+			.inspect(|wb| log::debug!("break form {wb:?}"))
+			.filter_map(|forms| {
+				forms
+					.into_iter()
+					.find_map(|p| eager_iter_first(self.forms(p)))
+			});
 
-		Ok(valid_form_exists)
+		Ok(eager_iter_first(valid_forms).is_some())
 	}
 
-	/// Break the input word in every possble way as defined by the `BREAK` directive
-	fn break_word<'a>(
-		&self,
-		word: &'a str,
-	) -> impl Iterator<Item = impl Iterator<Item = &'a str>> + 'a {
-		let break_possibilites = iter::once(vec![word].into_iter());
+	/// Break the input word in every possible way as defined by the `BREAK` directive
+	fn break_word<'a>(&self, word: &'a str) -> impl Iterator<Item = Vec<&'a str>> + 'a {
+		let break_possibilities = iter::once(vec![word]);
 
 		for pattern in &self.aff.options.compound_split_points {
 			todo!()
 		}
 
-		break_possibilites
+		break_possibilities
 	}
 
 	/// Return every valid form of this word as is could be interpreted by the dictionary
 	fn forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = WordForm> + 'a {
-		// TODO: detect capitalization type, check word for all capitalisation types
 		let word_casing = Casing::guess(word);
+
+		// TODO: add capitalisation option
 		let capitalisation = true;
-		let (cap, forms) = if capitalisation {
+		let (case, forms) = if capitalisation {
 			let variants = word_casing.variants(word.to_owned());
 			(word_casing, variants)
 		} else {
 			(word_casing, vec![word.to_owned()])
 		};
 
-		forms.into_iter().flat_map(|form| {
-			self.affix_forms(&form)
-				.into_iter()
-				.map(WordForm::Affix)
-				.chain(
-					self.compound_forms(&form)
-						.into_iter()
-						.map(WordForm::Compound),
-				)
-		})
+		log::debug!("casing guess: {case}");
+
+		forms
+			.into_iter()
+			.inspect(|word| log::debug!("casing {word:?}"))
+			.flat_map(|form| {
+				let affix_forms = self.affix_forms(&form).map(WordForm::Affix);
+				let compound_forms = self.compound_forms(&form).map(WordForm::Compound);
+
+				affix_forms
+					.chain(compound_forms)
+					// TODO: find a way to avoid collecting all forms
+					.collect::<Vec<_>>()
+					.into_iter()
+			})
+			.inspect(|f| log::debug!("valid form {f}"))
 	}
 
 	/// Return every valid affix form of this word as interpreted by the dictionary
-	fn affix_forms(&self, word: &str) -> Vec<AffixForm> {
-		// TODO: iterify that
-		let mut forms = vec![];
-
+	fn affix_forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = AffixForm> + 'a {
 		// For every form that could exist, we check it's validity
-		for form in self.produce_affix_forms(word).inspect(|f| eprintln!("{f}")) {
+		self.produce_affix_forms(word)
+			.inspect(|f| log::debug!("affix form {f}"))
 			// TODO: forbidden
-
-			// Only accept words that appear in the dictionary
-			for stem in self.dic.homonyms(&form.stem) {
-				if self.is_valid_affix_form(&form, stem) {
-					// TODO: no, pushed two times
-					forms.push(form.clone());
-				}
-			}
-		}
-		forms
+			.filter(|form| {
+				// Only accept words that appear in the dictionary
+				self.dic
+					.homonyms(&form.stem)
+					.any(|stem| self.is_valid_affix_form(form, stem))
+			})
 	}
 
-	/// Wether the given [`AffixForm`] would match current [`Stem`] definition
+	/// Whether the given [`AffixForm`] would match current [`Stem`] definition
 	fn is_valid_affix_form(&self, form: &AffixForm, entry: &Stem) -> bool {
 		// TODO: no suggest flag
 
-		if !form
-			.prefix
-			.as_ref()
-			.map_or(true, |p| entry.flags.contains(&p.flag))
-		{
-			return false;
+		if let Some(pfx) = &form.prefix {
+			if !entry.flags.has_flag(&pfx.flag) {
+				log::debug!("does not have corresponding prefix flag");
+				return false;
+			}
 		}
 
-		if !form
-			.suffix
-			.as_ref()
-			.map_or(true, |p| entry.flags.contains(&p.flag))
-		{
-			return false;
+		if let Some(sfx) = &form.suffix {
+			if !entry.flags.has_flag(&sfx.flag) {
+				log::debug!("does not have corresponding suffix flag");
+				return false;
+			}
+		}
+		if let Some(kc_flag) = self.aff.additional_flags.keep_case {
+			if entry.flags.has_flag(&kc_flag) {
+				// TODO: check entry.case == Casing::No;
+				// log::debug!("does not have corresponding keepcase flag");
+			}
 		}
 
 		true
@@ -271,8 +299,8 @@ impl Dictionary {
 
 	// Compound Forms
 
-	fn compound_forms(&self, word: &str) -> Vec<CompoundForm> {
-		vec![]
+	fn compound_forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = CompoundForm> + 'a {
+		vec![].into_iter()
 	}
 
 	/// Checks if `word` is only composed of digits and separators (`-,.`)
@@ -297,6 +325,7 @@ impl Dictionary {
 }
 
 /// A valid composed word form as understood by a diticonaru
+#[derive(Debug)]
 enum WordForm {
 	Affix(AffixForm),
 	Compound(CompoundForm),
@@ -305,8 +334,8 @@ enum WordForm {
 impl fmt::Display for WordForm {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Affix(a) => write!(f, "{a}"),
-			Self::Compound(c) => write!(f, "{c}"),
+			Self::Affix(a) => write!(f, "AffixForm{a}"),
+			Self::Compound(c) => write!(f, "CompoundForm{c}"),
 		}
 	}
 }
@@ -374,7 +403,7 @@ impl fmt::Display for AffixForm {
 	/// Must look like
 	/// AffixForm(text = prefix + stem + suffix)
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "AffixForm[{} = ", self.text)?;
+		write!(f, "[{} = ", self.text)?;
 
 		if let Some(prefix) = &self.prefix {
 			write!(f, "{prefix} + ")?;
@@ -390,10 +419,11 @@ impl fmt::Display for AffixForm {
 	}
 }
 
+#[derive(Debug)]
 struct CompoundForm {}
 
 impl fmt::Display for CompoundForm {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "CompoundForm[]")
+		write!(f, "[]")
 	}
 }

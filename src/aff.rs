@@ -1,6 +1,6 @@
 //! Logic to parse and represent `.aff` files.
 //!
-//! - Final represnetation is [`AffFile`]
+//! - Final representation is [`AffFile`]
 //! - Parsing logic is implemented in [`AffParser`], entrupoint is [`AffParser::parse`]
 
 use crate::{dic::DataField, dictionary::InitializeError, trie::Trie};
@@ -119,7 +119,7 @@ pub(crate) struct Options {
 	pub(crate) ignore: IgnoreList,
 	/// `AF`
 	/// Flags can be compressed and replaced with an ordinal number
-	flag_aliases: Vec<Flag>,
+	flag_aliases: Vec<Vec<Flag>>,
 	/// `AM`
 	morphological_aliases: Vec<DataField>,
 
@@ -228,7 +228,7 @@ pub(crate) struct AdditionalFlags {
 	/// `FORBIDDENWORD`
 	pub(crate) forbidden_word: Option<Flag>,
 	/// `KEEPCASE`
-	keep_case: Option<Flag>,
+	pub(crate) keep_case: Option<Flag>,
 	/// `LEMMA_PRESENT`
 	#[deprecated]
 	lemma_present: Option<Flag>,
@@ -538,7 +538,17 @@ impl AffParser {
 					(i, options.ignore = IgnoreList(chars))
 				}
 				"AF" => {
-					options.flag_aliases = todo!("AG");
+					let (i, num) = u64_p.terminated(newline).parse(i)?;
+					let (i, reps) = many_m_n(
+						usize::try_from(num).unwrap(),
+						usize::try_from(num).unwrap(),
+						tag("AF ")
+							.precedes(Self::parse_flags(&options.flag_ty))
+							.terminated(space0)
+							.terminated(newline),
+					)(i)?;
+
+					(i, options.flag_aliases = reps)
 				}
 				"AM" => {
 					options.morphological_aliases = todo!("AM");
@@ -869,7 +879,7 @@ impl AffParser {
 
 				"#" => (i, ()),
 
-				_ => todo!("warn unknown directive"),
+				unknown_dir => todo!("warn unknown directive: {unknown_dir}"),
 			};
 
 			Ok(res)
@@ -915,6 +925,32 @@ pub(crate) fn parse_flags(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Vec<
 	AffParser::parse_flags(fty)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Flags(Vec<Flag>);
+
+impl Flags {
+	pub(crate) fn new(flags: Vec<Flag>) -> Self {
+		Self(flags)
+	}
+
+	pub(crate) fn has_some(&self) -> bool {
+		!self.0.is_empty()
+	}
+
+	pub(crate) fn has_flag(&self, flag: &Flag) -> bool {
+		self.0.contains(flag)
+	}
+}
+
+impl fmt::Display for Flags {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		for flag in &self.0 {
+			write!(f, "{flag}")?;
+		}
+		Ok(())
+	}
+}
+
 /// A flag in dictionary files, see
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Flag {
@@ -956,10 +992,10 @@ impl IgnoreList {
 	}
 }
 
-/// How flags sould be parsed.
+/// How flags should be parsed.
 ///
 /// See [`Flag`] to see all forms with examples
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) enum FlagType {
 	/// `short`
 	#[default]

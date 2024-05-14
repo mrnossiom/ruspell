@@ -14,7 +14,7 @@ pub use dictionary::Dictionary;
 struct Pile {
 	/// Dictionaries constituting the pile in order
 	///
-	/// Order is important because the first dictinary that understands the word,
+	/// Order is important because the first dictionary that understands the word,
 	/// has the most importance in suggestions.
 	dicts: Vec<Dictionary>,
 }

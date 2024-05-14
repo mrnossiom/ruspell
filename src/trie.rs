@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-/// Trie data strucutre
+/// Trie data structure
 #[derive(Debug)]
 pub(crate) struct Trie<V> {
 	/// Tree root

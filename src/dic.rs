@@ -1,10 +1,10 @@
 //! Logic to parse and represent `.dic` files.
 //!
-//! - Final represnetation is [`DicFile`]
+//! - Final representation is [`DicFile`]
 //! - Parsing logic is implemented in [`DicParser`], entrupoint is [`DicParser::parse`]
 
 use crate::{
-	aff::{self, parse_flags, Flag},
+	aff::{self, parse_flags, Flags},
 	dictionary::InitializeError,
 };
 use nom::{
@@ -100,7 +100,7 @@ impl<'op> DicParser<'op> {
 			case: Casing::guess(&root),
 
 			root,
-			flags,
+			flags: Flags::new(flags),
 			data_fields,
 		};
 
@@ -158,7 +158,7 @@ pub(crate) struct Stem {
 	root: String,
 	/// Associated flags (affix and options flags)
 	// TODO: link to certain options e.g. `FORBIDDENFLAG`
-	pub(crate) flags: Vec<Flag>,
+	pub(crate) flags: Flags,
 	/// Associated metadata
 	data_fields: Vec<DataField>,
 	// alt_spelling
@@ -169,11 +169,8 @@ pub(crate) struct Stem {
 impl fmt::Display for Stem {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "{}", self.root)?;
-		if !self.flags.is_empty() {
-			write!(f, "/")?;
-			for flag in &self.flags {
-				write!(f, "{flag}")?;
-			}
+		if !self.flags.has_some() {
+			write!(f, "/{}", self.flags)?;
 		}
 		if !self.data_fields.is_empty() {
 			for data in &self.data_fields {
@@ -203,6 +200,18 @@ pub(crate) enum Casing {
 	HuhInit,
 }
 
+impl fmt::Display for Casing {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::No => write!(f, "No"),
+			Self::Init => write!(f, "Init"),
+			Self::All => write!(f, "All"),
+			Self::Huh => write!(f, "Huh"),
+			Self::HuhInit => write!(f, "HuhInit"),
+		}
+	}
+}
+
 impl Casing {
 	/// Based on input, guess with a simple algorithm the casing
 	pub(crate) fn guess(s: &str) -> Self {
@@ -214,8 +223,8 @@ impl Casing {
 			false if chars.clone().all(char::is_lowercase) => Self::No,
 			true if chars.clone().all(char::is_lowercase) => Self::Init,
 			true if chars.clone().all(char::is_uppercase) => Self::All,
-			false => Self::HuhInit,
-			true => Self::Huh,
+			false => Self::Huh,
+			true => Self::HuhInit,
 		}
 	}
 
@@ -318,6 +327,8 @@ impl fmt::Display for DataField {
 
 #[cfg(test)]
 mod tests {
+	use crate::aff::Flag;
+
 	use super::*;
 
 	const TEST_WORD: &str = "hello";
@@ -391,7 +402,7 @@ mod tests {
 
 		test!("word/FGS ph:hello\n" -> super::Stem {
 			root: "word".into(),
-			flags: vec![Flag::Short('F'), Flag::Short('G'), Flag::Short('S')],
+			flags: Flags::new(vec![Flag::Short('F'), Flag::Short('G'), Flag::Short('S')]),
 			data_fields: vec![Alternative(TEST_WORD.into())],
 			case: Casing::No,
 		});
