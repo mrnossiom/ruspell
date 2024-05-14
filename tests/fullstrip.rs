@@ -1,4 +1,4 @@
-use ruspell::Dictionary;
+mod utils;
 
 const FULLSTRIP_AFF: &str = "\
 # FULLSTRIP option: Hunspell can strip full words by affix rules
@@ -39,25 +39,6 @@ const FULLSTRIP_GOOD: [&str; 8] = [
 ];
 
 #[test]
-fn fullstrip() -> Result<(), Box<dyn std::error::Error>> {
-	let dict = Dictionary::from_slice(FULLSTRIP_AFF, FULLSTRIP_DIC)?;
-
-	let mut pass = true;
-
-	FULLSTRIP_GOOD
-		.into_iter()
-		.filter(|w| !dict.lookup(w).unwrap_or_default())
-		.for_each(|ww| {
-			pass = false;
-			eprintln!("{ww} is supposed to be fine but is wrong");
-		});
-
-	if pass {
-		Ok(())
-	} else {
-		Err(Box::new(std::io::Error::new(
-			std::io::ErrorKind::NotFound,
-			"",
-		)))
-	}
+fn base() -> Result<(), Box<dyn std::error::Error>> {
+	utils::test_dictionary_pair(FULLSTRIP_AFF, FULLSTRIP_DIC, &FULLSTRIP_GOOD, &[], None)
 }

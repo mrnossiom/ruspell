@@ -1,6 +1,6 @@
 mod utils;
 
-const BASE_AFF: &str = include_str!("./base.aff");
+const BASE_AFF: &str = include_str!("./base_unicode.aff");
 
 const BASE_DIC: &str = "\
 28
@@ -21,10 +21,10 @@ day
 tomorrow
 seven
 FAQ/SM
-can't
-doesn't
+can’t
+doesn’t
 etc
-won't
+won’t
 lip
 text
 horrifying
@@ -32,9 +32,10 @@ speech
 suggest
 uncreate/V
 Hunspell
+İzmir
 ";
 
-const BASE_GOOD: [&str; 27] = [
+const BASE_GOOD: [&str; 33] = [
 	"created",
 	"uncreate",
 	"uncreated",
@@ -45,9 +46,9 @@ const BASE_GOOD: [&str; 27] = [
 	"sawyer",
 	"NASA",
 	"FAQs",
-	"can't",
-	"doesn't",
-	"won't",
+	"can’t",
+	"doesn’t",
+	"won’t",
 	"Created",
 	"Hello",
 	"HELLO",
@@ -62,9 +63,15 @@ const BASE_GOOD: [&str; 27] = [
 	"TEXT.",
 	"Hunspell.",
 	"HUNSPELL.",
+	"İzmir",
+	"İZMİR",
+	"İzmir.",
+	"İZMİR.",
+	"Imply",
+	"IMPLY",
 ];
 
-const BASE_WRONG: [&str; 11] = [
+const BASE_WRONG: [&str; 13] = [
 	"loooked",
 	"texxt",
 	"hlelo",
@@ -76,10 +83,12 @@ const BASE_WRONG: [&str; 11] = [
 	"horrorfying",
 	"peech",
 	"sugesst",
+	"İmply",
+	"İMPLY",
 ];
 
 #[test]
-fn base() -> Result<(), Box<dyn std::error::Error>> {
+fn base_unicode() -> Result<(), Box<dyn std::error::Error>> {
 	let suggestions = vec![
 		vec!["looked", "look"],
 		vec!["text"],
@@ -92,6 +101,8 @@ fn base() -> Result<(), Box<dyn std::error::Error>> {
 		vec!["horrifying"],
 		vec!["speech"],
 		vec!["suggest"],
+		vec!["Imply"],
+		vec!["IMPLY"],
 	];
 
 	utils::test_dictionary_pair(

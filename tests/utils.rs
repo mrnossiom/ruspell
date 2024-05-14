@@ -1,0 +1,45 @@
+use ruspell::Dictionary;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0} word failed to be correctly spellchecked")]
+struct SpellCheckErrors(usize);
+
+pub(crate) fn test_dictionary_pair(
+	aff: &str,
+	dic: &str,
+	good: &[&str],
+	wrong: &[&str],
+	suggestions: Option<&[Vec<&str>]>,
+) -> Result<(), Box<dyn std::error::Error>> {
+	let dict = Dictionary::from_slice(aff, dic)?;
+
+	let mut errrors = 0;
+
+	errrors += good
+		.iter()
+		.filter(|w| !dict.lookup(w).unwrap_or_default())
+		.inspect(|ww| {
+			eprintln!("{ww} is supposed to be fine but is wrong");
+		})
+		.count();
+
+	errrors += wrong
+		.iter()
+		.filter(|w| dict.lookup(w).unwrap_or_default())
+		.inspect(|ww| {
+			eprintln!("{ww} is supposed to be wrong but is fine");
+		})
+		.count();
+
+	if let Some(suggs) = suggestions {
+		assert_eq!(suggs.len(), wrong.len());
+
+		todo!()
+	}
+
+	if errrors == 0 {
+		Ok(())
+	} else {
+		Err(Box::new(SpellCheckErrors(errrors)))
+	}
+}
