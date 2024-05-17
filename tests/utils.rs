@@ -11,23 +11,35 @@ pub(crate) fn test_dictionary_pair(
 	wrong: &[&str],
 	suggestions: Option<&[Vec<&str>]>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+	pretty_env_logger::init();
+
 	let dict = Dictionary::from_slice(aff, dic)?;
 
 	let mut errrors = 0;
 
 	errrors += good
 		.iter()
-		.filter(|w| !dict.lookup(w).unwrap_or_default())
-		.inspect(|ww| {
-			eprintln!("{ww} is supposed to be fine but is wrong");
+		.filter(|w| {
+			if dict.lookup(w).unwrap_or_default() {
+				log::info!("{w} is indeed fine");
+				false
+			} else {
+				log::error!("{w} is supposed to be fine but is wrong");
+				true
+			}
 		})
 		.count();
 
 	errrors += wrong
 		.iter()
-		.filter(|w| dict.lookup(w).unwrap_or_default())
-		.inspect(|ww| {
-			eprintln!("{ww} is supposed to be wrong but is fine");
+		.filter(|w| {
+			if dict.lookup(w).unwrap_or_default() {
+				log::error!("{w} is supposed to be wrong but is fine");
+				true
+			} else {
+				log::info!("{w} is indeed wrong");
+				false
+			}
 		})
 		.count();
 

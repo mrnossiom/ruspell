@@ -88,7 +88,10 @@ impl<'op> DicParser<'op> {
 			// TODO: doesn't take into account escaped slashes
 			is_not(" /\n").map(ToOwned::to_owned),
 			tag("/")
-				.precedes(parse_flags(&self.options.flag_ty))
+				.precedes(parse_flags(
+					&self.options.flag_ty,
+					&self.options.flag_aliases,
+				))
 				.opt()
 				.map(Option::unwrap_or_default),
 			Self::parse_data_fields,

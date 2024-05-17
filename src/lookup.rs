@@ -192,6 +192,7 @@ impl Dictionary {
 	// this is an alternative impl to spylls that only searches the affixes once to then combine them
 	// TODO: bench and choose
 	/// Produce every possible [`AffixForm`], it will be validated by [`Dictionary::is_valid_affix_form`] after
+	#[cfg(debug_assertions)]
 	fn produce_affix_forms_two<'a>(
 		&'a self,
 		word: &'a str,
@@ -221,10 +222,6 @@ impl Dictionary {
 				}
 			}
 		}
-
-		// iter::once(whole_word)
-		// 	.chain(self.produce_prefix_and_cross_forms(word))
-		// 	.chain(self.produce_suffix_forms(word, None))
 
 		// TODO: iterify
 		forms.into_iter()
@@ -327,7 +324,9 @@ impl Dictionary {
 /// A valid composed word form as understood by a diticonaru
 #[derive(Debug)]
 enum WordForm {
+	/// An affix
 	Affix(AffixForm),
+	/// A compound
 	Compound(CompoundForm),
 }
 
@@ -349,10 +348,16 @@ struct AffixForm {
 	// TODO: slices of [`text`]
 	/// stem as it may exists in dictionary
 	stem: String,
+
 	/// a optional prefix
 	prefix: Option<Affix<Prefix>>,
+	/// a optional second prefix
+	prefix_second: Option<Affix<Prefix>>,
+
 	/// a optional suffix
 	suffix: Option<Affix<Suffix>>,
+	/// a optional second suffix
+	suffix_second: Option<Affix<Suffix>>,
 }
 
 impl AffixForm {
@@ -394,7 +399,9 @@ impl AffixForm {
 			text: word.to_owned(),
 			stem,
 			prefix,
+			prefix_second: None,
 			suffix,
+			suffix_second: None,
 		}
 	}
 }

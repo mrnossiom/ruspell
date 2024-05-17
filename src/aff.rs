@@ -8,7 +8,7 @@ use nom::{
 	branch::alt,
 	bytes::complete::{is_not, tag, take, take_while1},
 	character::complete::{newline, satisfy, space0, space1, u16 as u16_p, u64 as u64_p},
-	combinator::map,
+	combinator::{map, opt},
 	multi::{many1, many_m_n, separated_list1},
 	sequence::{delimited, preceded, terminated, tuple},
 	IResult, Parser,
@@ -110,7 +110,7 @@ pub(crate) struct Options {
 	encoding: Encoding,
 	/// `FLAG`
 	// TODO: check pub
-	pub flag_ty: FlagType,
+	pub(crate) flag_ty: FlagType,
 	/// `COMPLEXPREFIXES`
 	complex_prefixes: bool,
 	/// `LANG`
@@ -118,9 +118,11 @@ pub(crate) struct Options {
 	/// `IGNORE`
 	pub(crate) ignore: IgnoreList,
 	/// `AF`
-	/// Flags can be compressed and replaced with an ordinal number
-	flag_aliases: Vec<Vec<Flag>>,
+	/// Flags can be compressed and replaced with an ordinal number.
+	/// Table is `0`-indexed.
+	pub(crate) flag_aliases: Vec<Vec<Flag>>,
 	/// `AM`
+	/// Table is `0`-indexed.
 	morphological_aliases: Vec<DataField>,
 
 	// ——— for suggestions
@@ -324,6 +326,10 @@ pub(crate) struct Affix<T> {
 	pub(crate) strip: String,
 	/// Stem must meet condition before affix is applied
 	pub(crate) condition: Option<Regex>,
+
+	/// Associated flags
+	pub(crate) flags: Flags,
+
 	/// Associated metadata to further enhance suggestion and lookup
 	pub(crate) data_fields: Vec<DataField>,
 
@@ -334,7 +340,7 @@ pub(crate) struct Affix<T> {
 
 impl fmt::Display for Affix<Prefix> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Prefix({}-, ", self.add,)?;
+		write!(f, "({}-, ", self.add,)?;
 		if let Some(condition) = &self.condition {
 			write!(f, "on {condition}, ")?;
 		}
@@ -346,6 +352,9 @@ impl fmt::Display for Affix<Prefix> {
 		)?;
 		if !self.strip.is_empty() {
 			write!(f, ", -{}", self.strip)?;
+		}
+		if self.flags.has_some() {
+			write!(f, ", with {}", self.flags)?;
 		}
 		write!(f, ")")
 	}
@@ -353,7 +362,7 @@ impl fmt::Display for Affix<Prefix> {
 
 impl fmt::Display for Affix<Suffix> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Suffix(-{}, ", self.add,)?;
+		write!(f, "(-{}, ", self.add,)?;
 		if let Some(condition) = &self.condition {
 			write!(f, "on {condition}, ")?;
 		}
@@ -366,37 +375,10 @@ impl fmt::Display for Affix<Suffix> {
 		if !self.strip.is_empty() {
 			write!(f, ", -{}", self.strip)?;
 		}
+		if self.flags.has_some() {
+			write!(f, ", with {:#}", self.flags)?;
+		}
 		write!(f, ")")
-	}
-}
-
-// TODO: remove
-type AffixVariant = Vec<(
-	// stripping
-	String,
-	// affix
-	String,
-	// condition
-	Option<Regex>,
-	// data_fields
-	Vec<DataField>,
-)>;
-
-impl<T> Affix<T> {
-	/// Initialize a list of [`Affix`]es
-	fn new(flag: Flag, cross_product: bool, variant: AffixVariant) -> Vec<Self> {
-		variant
-			.into_iter()
-			.map(|(strip, affix, condition, data_fields)| Self {
-				flag,
-				cross_product,
-				strip,
-				add: affix,
-				condition,
-				data_fields,
-				kind: PhantomData,
-			})
-			.collect()
 	}
 }
 
@@ -543,10 +525,14 @@ impl AffParser {
 						usize::try_from(num).unwrap(),
 						usize::try_from(num).unwrap(),
 						tag("AF ")
-							.precedes(Self::parse_flags(&options.flag_ty))
+							.precedes(Self::parse_flags(&options.flag_ty, &options.flag_aliases))
 							.terminated(space0)
 							.terminated(newline),
 					)(i)?;
+
+					for (i, rep) in reps.iter().enumerate() {
+						log::debug!("(AF) aliased {} to {rep:?}", i + 1);
+					}
 
 					(i, options.flag_aliases = reps)
 				}
@@ -719,40 +705,69 @@ impl AffParser {
 						}),
 						u64_p.preceded_by(space1).terminated(newline),
 					))(i)?;
-					let (i, affix_variants) = many_m_n(
+					let (i, mut pfxs) = many_m_n(
 						usize::try_from(num).unwrap(),
 						usize::try_from(num).unwrap(),
 						tag("PFX ")
 							.precedes(tag(flag.to_string().as_str()))
-							.precedes(tuple((
-								// TODO: 0 mean nothing
-								is_not(" ")
+							.precedes(|i| {
+								// 0 means nothing
+								let (i, strip) = is_not(" ")
 									.preceded_by(space1)
 									// TODO
 									.map(|s| if s == "0" { "" } else { s })
 									// .map(|s| if s == "0" { None } else { Some(s) })
-									.map(ToOwned::to_owned),
-								is_not(" \n")
-									.preceded_by(space1)
-									// TODO
-									.map(|s| if s == "0" { "" } else { s })
-									// .map(|s| if s == "0" { None } else { Some(s) })
-									.map(ToOwned::to_owned),
-								// TODO: . means nothing
-								is_not(" \n")
-									.preceded_by(space1)
+									.parse(i)?;
+
+								let (i, (add, flags)) = tuple((
+									// TODO: handle escaped affix `\/` ?
+									is_not("/ \n")
+										// .map(|s| if s == "0" { None } else { Some(s) })
+										.map(|s| if s == "0" { "" } else { s }),
+									opt(Self::parse_flags(&options.flag_ty, &options.flag_aliases)
+										.preceded_by(tag("/"))),
+								))
+								.preceded_by(space1)
+								.parse(i)?;
+
+								// . means nothing
+								let (i, condition) = is_not(" \n")
 									.opt()
 									.map(|s| if s == Some(".") { None } else { s })
-									.map(|s| s.map(ToOwned::to_owned))
-									.map(|o| o.map(|s| Regex::new(&format!("^{s}")).unwrap())),
-								is_not("\n").preceded_by(space1).opt().value(vec![]),
-							)))
+									.preceded_by(space1)
+									// TODO: is this really opt? ~spec is not clear cause dot is placeholder
+									.parse(i)?;
+
+								let (i, data_fields) = is_not("\n")
+									.preceded_by(space1)
+									.opt()
+									// TODO: actually parse data fields
+									.value(vec![])
+									.parse(i)?;
+
+								let pfx = Affix::<Prefix> {
+									flag,
+									cross_product,
+
+									strip: strip.to_owned(),
+									add: add.to_owned(),
+									condition: condition
+										.map(|s| Regex::new(&format!("^{s}")).unwrap()),
+
+									flags: Flags::new(flags.unwrap_or_default()),
+									data_fields,
+
+									kind: PhantomData,
+								};
+
+								log::debug!("(PFX) added prefix {}", pfx);
+								Ok((i, pfx))
+							})
 							.terminated(space0)
 							.terminated(newline),
 					)(i)?;
 
-					let mut prefs = Affix::new(flag, cross_product, affix_variants);
-					(i, prefixes.append(&mut prefs))
+					(i, prefixes.append(&mut pfxs))
 				}
 				"SFX" => {
 					let (i, (flag, cross_product, num)) = tuple((
@@ -762,41 +777,69 @@ impl AffParser {
 						}),
 						u64_p.preceded_by(space1).terminated(newline),
 					))(i)?;
-					let (i, affix_variants) = many_m_n(
+					let (i, mut sfxs) = many_m_n(
 						usize::try_from(num).unwrap(),
 						usize::try_from(num).unwrap(),
 						tag("SFX ")
 							.precedes(tag(flag.to_string().as_str()))
-							.precedes(tuple((
+							.precedes(|i| {
 								// 0 means nothing
-								is_not(" ")
+								let (i, strip) = is_not(" ")
 									.preceded_by(space1)
 									// TODO
 									.map(|s| if s == "0" { "" } else { s })
 									// .map(|s| if s == "0" { None } else { Some(s) })
-									.map(ToOwned::to_owned),
-								is_not(" \n")
-									.preceded_by(space1)
-									// TODO
-									.map(|s| if s == "0" { "" } else { s })
-									// .map(|s| if s == "0" { None } else { Some(s) })
-									.map(ToOwned::to_owned),
+									.parse(i)?;
+
+								let (i, (add, flags)) = tuple((
+									// TODO: handle escaped affix `\/` ?
+									is_not("/ \n")
+										// .map(|s| if s == "0" { None } else { Some(s) })
+										.map(|s| if s == "0" { "" } else { s }),
+									opt(Self::parse_flags(&options.flag_ty, &options.flag_aliases)
+										.preceded_by(tag("/"))),
+								))
+								.preceded_by(space1)
+								.parse(i)?;
+
 								// . means nothing
-								is_not(" \n")
-									.preceded_by(space1)
-									// TODO: is this really opt? ~spec is not clear cause dot is placeholder
+								let (i, condition) = is_not(" \n")
 									.opt()
 									.map(|s| if s == Some(".") { None } else { s })
-									.map(|s| s.map(ToOwned::to_owned))
-									.map(|o| o.map(|s| Regex::new(&format!("{s}$")).unwrap())),
-								is_not("\n").preceded_by(space1).opt().value(vec![]),
-							)))
+									.preceded_by(space1)
+									// TODO: is this really opt? ~spec is not clear cause dot is placeholder
+									.parse(i)?;
+
+								let (i, data_fields) = is_not("\n")
+									.preceded_by(space1)
+									.opt()
+									// TODO: actually parse data fields
+									.value(vec![])
+									.parse(i)?;
+
+								let sfx = Affix::<Suffix> {
+									flag,
+									cross_product,
+
+									strip: strip.to_owned(),
+									add: add.to_owned(),
+									condition: condition
+										.map(|s| Regex::new(&format!("{s}$")).unwrap()),
+
+									flags: Flags::new(flags.unwrap_or_default()),
+									data_fields,
+
+									kind: PhantomData,
+								};
+
+								log::debug!("(SFX) added suffix {}", sfx);
+								Ok((i, sfx))
+							})
 							.terminated(space0)
 							.terminated(newline),
 					)(i)?;
 
-					let mut sufs = Affix::new(flag, cross_product, affix_variants);
-					(i, suffixes.append(&mut sufs))
+					(i, suffixes.append(&mut sfxs))
 				}
 
 				// ——— other
@@ -911,18 +954,48 @@ impl AffParser {
 	}
 
 	/// Parse a list of flags
-	fn parse_flags(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + '_ {
-		move |i: &str| match fty {
-			FlagType::Short | FlagType::Long | FlagType::Utf8 => many1(Self::parse_flag(fty))(i),
-			FlagType::Numeric => separated_list1(tag(","), Self::parse_flag(fty))(i),
+	fn parse_flags<'a>(
+		fty: &'a FlagType,
+
+		flag_aliases: &'a [Vec<Flag>],
+	) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + 'a {
+		move |i: &str| {
+			{
+				// TODO: this does not check `strip/2,3,4`
+				let (i, digit) = opt(u64_p)(i)?;
+
+				if !flag_aliases.is_empty() {
+					if let Some(digit) = digit {
+						return Ok((
+							i,
+							// TODO: errors must be really bad
+							// wouldn't like to debug that later
+							flag_aliases
+								// We translate to a 0-index table
+								.get(usize::try_from(digit - 1).unwrap())
+								.unwrap()
+								.clone(),
+						));
+					}
+				}
+			}
+			match fty {
+				FlagType::Short | FlagType::Long | FlagType::Utf8 => {
+					many1(Self::parse_flag(fty))(i)
+				}
+				FlagType::Numeric => separated_list1(tag(","), Self::parse_flag(fty))(i),
+			}
 		}
 	}
 }
 
 // Reexport to parse flags in the dictionary
 #[doc(hidden)]
-pub(crate) fn parse_flags(fty: &FlagType) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + '_ {
-	AffParser::parse_flags(fty)
+pub(crate) fn parse_flags<'a>(
+	fty: &'a FlagType,
+	flags: &'a [Vec<Flag>],
+) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + 'a {
+	AffParser::parse_flags(fty, flags)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
