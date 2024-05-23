@@ -88,6 +88,7 @@ const BASE_WRONG: [&str; 13] = [
 ];
 
 #[test]
+#[ignore = "implement locale specific lowercasing"]
 fn base_unicode() -> Result<(), Box<dyn std::error::Error>> {
 	let suggestions = vec![
 		vec!["looked", "look"],

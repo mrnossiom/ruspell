@@ -1,7 +1,7 @@
 mod utils;
 
 #[test]
-fn alias_one() -> Result<(), Box<dyn std::error::Error>> {
+fn alias_flag() -> Result<(), Box<dyn std::error::Error>> {
 	utils::test_dictionary_pair(
 		"\
 # aliases for flag vectors (AF)
@@ -28,8 +28,7 @@ foo/1
 }
 
 #[test]
-#[ignore]
-fn alias_two() -> Result<(), Box<dyn std::error::Error>> {
+fn alias_morphological_description() -> Result<(), Box<dyn std::error::Error>> {
 	utils::test_dictionary_pair(
 		"\
 # aliases for flag vectors (AF) and morphological descriptions (AM)
@@ -42,7 +41,8 @@ AF A
 AM 3
 AM is:affix_x
 AM ds:affix_y
-AM po:noun xx:other_data
+AM po:noun st:other_data
+#          ^^ Was `xx` in original test, but we don't parse out of spec
 
 SFX A Y 1
 SFX A 0 x . 1

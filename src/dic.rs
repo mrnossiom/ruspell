@@ -4,14 +4,14 @@
 //! - Parsing logic is implemented in [`DicParser`], entrupoint is [`DicParser::parse`]
 
 use crate::{
-	aff::{self, parse_flags, Flags},
+	aff::{self, parse_data_field, parse_flags, Flags},
 	dictionary::InitializeError,
 };
 use nom::{
-	bytes::complete::{is_not, tag, take},
-	character::complete::{newline, space1, u64 as u64_p},
-	combinator::map,
-	multi::many0,
+	branch::alt,
+	bytes::complete::{is_not, tag},
+	character::complete::{newline, space0, space1, u64 as u64_p},
+	multi::{many1, separated_list1},
 	sequence::tuple,
 	IResult, Parser,
 };
@@ -68,7 +68,7 @@ impl<'op> DicParser<'op> {
 		let parser_err = |e: nom::Err<nom::error::Error<_>>| InitializeError::Parser(e.to_string());
 
 		let (i, _nb_of_lines) = u64_p.terminated(newline).parse(i).map_err(parser_err)?;
-		let (_, stems) = many0(|i| self.parse_entry(i))
+		let (_, stems) = many1(|i| self.parse_entry(i))
 			.all_consuming()
 			.parse(i)
 			.map_err(parser_err)?;
@@ -88,14 +88,15 @@ impl<'op> DicParser<'op> {
 			// TODO: doesn't take into account escaped slashes
 			is_not(" /\n").map(ToOwned::to_owned),
 			tag("/")
-				.precedes(parse_flags(
-					&self.options.flag_ty,
-					&self.options.flag_aliases,
-				))
+				.precedes(parse_flags(self.options))
 				.opt()
 				.map(Option::unwrap_or_default),
-			Self::parse_data_fields,
+			Self::parse_data_fields_with_compression(self.options)
+				.preceded_by(space1)
+				.opt()
+				.map(Option::unwrap_or_default),
 		))
+		.terminated(space0)
 		.terminated(newline)
 		.parse(i)?;
 
@@ -110,35 +111,25 @@ impl<'op> DicParser<'op> {
 		Ok((i, stem))
 	}
 
-	/// Parse stem associated data fields
-	fn parse_data_fields(i: &str) -> IResult<&str, Vec<DataField>> {
-		many0(space1.precedes(Self::parse_data_field))(i)
-	}
-
-	/// Parse a single data field
-	fn parse_data_field(i: &str) -> IResult<&str, DataField> {
-		let (i, discriminant) = take(2usize).terminated(tag(":")).parse(i)?;
-
-		let till_space = map(is_not(" \n"), ToString::to_string);
-
-		match discriminant {
-			"ph" => map(till_space, DataField::Alternative)(i),
-			"st" => map(till_space, DataField::Stem)(i),
-			"al" => map(till_space, DataField::Allomorph)(i),
-			"po" => map(till_space, DataField::PartOfSpeech)(i),
-
-			"ds" => map(till_space, DataField::DerivationalSuffix)(i),
-			"is" => map(till_space, DataField::InflectionalSuffix)(i),
-			"ts" => map(till_space, DataField::TerminalSuffix)(i),
-
-			"dp" => map(till_space, DataField::DerivationalPrefix)(i),
-			"ip" => map(till_space, DataField::InflectionalPrefix)(i),
-			"tp" => map(till_space, DataField::TerminalPrefix)(i),
-
-			"sp" => map(till_space, DataField::SurfacePrefix)(i),
-			"pa" => map(till_space, DataField::PartsOfCompound)(i),
-
-			_ => todo!("error out with invalid data field type"),
+	fn parse_data_fields_with_compression<'a>(
+		options: &'a aff::Options,
+	) -> impl Fn(&'a str) -> IResult<&'a str, Vec<DataField>> + 'a {
+		move |i: &str| {
+			separated_list1(
+				space1,
+				alt((
+					u64_p.map(|i| {
+						options
+							.morphological_aliases
+							.get(i as usize - 1)
+							.cloned()
+							.unwrap()
+					}),
+					parse_data_field.map(|df| vec![df]),
+				)),
+			)
+			.map(|dfl| dfl.into_iter().flatten().collect())
+			.parse(i)
 		}
 	}
 }
@@ -330,63 +321,8 @@ impl fmt::Display for DataField {
 
 #[cfg(test)]
 mod tests {
-	use crate::aff::Flag;
-
 	use super::*;
-
-	const TEST_WORD: &str = "hello";
-
-	#[test]
-	fn parse_every_data_field_form() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
-		macro_rules! test {
-			($source:literal => $res:expr) => {{
-				use DataField::*;
-				let (i, df) = DicParser::parse_data_field($source)?;
-				assert_eq!(df, $res);
-				assert_eq!(i, "");
-			}};
-		}
-
-		test!("ph:hello" => Alternative(TEST_WORD.into()));
-		// TODO
-		// test_df!("ph:hello->bye" => Alternative(TEST_WORD.into()));
-
-		test!("st:hello" => Stem(TEST_WORD.into()));
-		test!("al:hello" => Allomorph(TEST_WORD.into()));
-		test!("po:hello" => PartOfSpeech(TEST_WORD.into()));
-
-		test!("ds:hello" => DerivationalSuffix(TEST_WORD.into()));
-		test!("is:hello" => InflectionalSuffix(TEST_WORD.into()));
-		test!("ts:hello" => TerminalSuffix(TEST_WORD.into()));
-
-		test!("dp:hello" => DerivationalPrefix(TEST_WORD.into()));
-		test!("ip:hello" => InflectionalPrefix(TEST_WORD.into()));
-		test!("tp:hello" => TerminalPrefix(TEST_WORD.into()));
-
-		test!("sp:hello" => SurfacePrefix(TEST_WORD.into()));
-		test!("pa:hello" => PartsOfCompound(TEST_WORD.into()));
-
-		Ok(())
-	}
-
-	#[test]
-	fn parse_data_field_list() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
-		use DataField::*;
-		macro_rules! test {
-			($source:literal => $res:expr) => {{
-				let (i, s) = DicParser::parse_data_fields($source)?;
-				assert_eq!(s.as_slice(), $res.as_slice());
-				assert_eq!(i, "");
-			}};
-		}
-
-		test!(" ph:hello al:hello" => [Alternative(TEST_WORD.into()), Allomorph(TEST_WORD.into())]);
-		test!(" ph:hello al:hello po:hello" => [Alternative(TEST_WORD.into()), Allomorph(TEST_WORD.into()), PartOfSpeech(TEST_WORD.into())]);
-		// TODO
-		// test_df!("ph:hello->bye" => Alternative(hello.clone()));
-
-		Ok(())
-	}
+	use crate::aff::Flag;
 
 	#[test]
 	#[allow(clippy::unnecessary_wraps)]
@@ -403,10 +339,12 @@ mod tests {
 			}};
 		}
 
+		let test_word = String::from("hello");
+
 		test!("word/FGS ph:hello\n" -> super::Stem {
 			root: "word".into(),
 			flags: Flags::new(vec![Flag::Short('F'), Flag::Short('G'), Flag::Short('S')]),
-			data_fields: vec![Alternative(TEST_WORD.into())],
+			data_fields: vec![Alternative(test_word)],
 			case: Casing::No,
 		});
 

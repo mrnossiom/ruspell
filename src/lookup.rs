@@ -186,7 +186,7 @@ impl Dictionary {
 
 		iter::once(whole_word)
 			.chain(self.produce_prefix_and_cross_forms(word))
-			.chain(self.produce_suffix_forms(word, None))
+			.chain(self.produce_suffix_forms(word, &None))
 	}
 
 	// this is an alternative impl to spylls that only searches the affixes once to then combine them
@@ -241,7 +241,7 @@ impl Dictionary {
 				// TODO: filter prefixes that don't match condition
 				if prefix.cross_product {
 					iter::once(form.clone())
-						.chain(self.produce_suffix_forms(word, Some(form)))
+						.chain(self.produce_suffix_forms(word, &Some(form)))
 						.collect()
 				} else {
 					vec![form]
@@ -254,7 +254,7 @@ impl Dictionary {
 		&'a self,
 		word: &'a str,
 		// pass a prefix to form complex affix forms, see crossproduct
-		prefix: Option<AffixForm>,
+		prefix: &'a Option<AffixForm>,
 	) -> impl Iterator<Item = AffixForm> + 'a {
 		let collect = word.chars().rev().collect::<String>();
 		// TODO: GG
@@ -280,15 +280,74 @@ impl Dictionary {
 
 				s.condition.clone().map_or(true, |r| r.is_match(&word))
 			})
-			.map(move |suffix| {
-				prefix.as_ref().map_or_else(
-					|| AffixForm::new(word, None, Some(suffix.clone())),
-					|prefix| {
-						let mut prefix = prefix.clone();
-						prefix.suffix = Some(suffix.clone());
-						let strip_suffix = prefix.stem.strip_suffix(&suffix.add).unwrap();
-						prefix.stem = format!("{strip_suffix}{}", suffix.strip);
-						prefix
+			.map(|sfx| {
+				(
+					sfx,
+					prefix
+						.as_ref()
+						.map(|p| p.stem.as_str())
+						.unwrap_or(word)
+						.strip_suffix(&sfx.add)
+						.unwrap(),
+				)
+			})
+			.flat_map(move |(suffix, stem)| {
+				let collect = stem.chars().rev().collect::<String>();
+				// TODO: GG
+				let collect = Box::leak(Box::new(collect));
+
+				iter::once((suffix, None)).chain(
+					self.aff
+						.suffix_index
+						.get_all(collect)
+						.into_iter()
+						.inspect(|d| {
+							log::info!("=== {}", d);
+						})
+						.filter(|deep_sfx| deep_sfx.flags.has_flag(&suffix.clone().flag))
+						.map(move |deep_sfx| (suffix, Some(deep_sfx.clone())))
+						.inspect(|sfx| {
+							log::debug!(
+								"deep check {} — {}",
+								sfx.1.as_ref().map(ToString::to_string).unwrap_or_default(),
+								sfx.0,
+							);
+						}),
+				)
+			})
+			.map(|(first_sfx, second_sfx)| {
+				prefix.clone().map_or_else(
+					|| {
+						let mut form = AffixForm::new(word, None, Some(first_sfx.clone()));
+
+						let mut strip_suffix = form.stem.as_str();
+						if let Some(second_sfx) = &second_sfx {
+							strip_suffix = form.stem.strip_suffix(&second_sfx.add).unwrap();
+							form.suffix_second = Some(second_sfx.clone());
+						}
+						form.stem = format!(
+							"{strip_suffix}{}",
+							second_sfx.as_ref().map_or("", |p| p.strip.as_str()),
+						);
+
+						form
+					},
+					|mut form| {
+						form.suffix = Some(first_sfx.clone());
+						let mut strip_suffix = form.stem.strip_suffix(&first_sfx.add).unwrap();
+
+						if let Some(second_sfx) = &second_sfx {
+							strip_suffix = form.stem.strip_suffix(&second_sfx.add).unwrap();
+							form.suffix_second = Some(second_sfx.clone());
+						}
+
+						form.stem = format!(
+							"{strip_suffix}{}{}",
+							second_sfx.as_ref().map_or("", |p| p.strip.as_str()),
+							first_sfx.strip
+						);
+
+						form
 					},
 				)
 			})
@@ -333,8 +392,8 @@ enum WordForm {
 impl fmt::Display for WordForm {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Affix(a) => write!(f, "AffixForm{a}"),
-			Self::Compound(c) => write!(f, "CompoundForm{c}"),
+			Self::Affix(a) => write!(f, "affix ({a})"),
+			Self::Compound(c) => write!(f, "compound ({c})"),
 		}
 	}
 }
@@ -404,25 +463,50 @@ impl AffixForm {
 			suffix_second: None,
 		}
 	}
+
+	// fn update(
+	// 	mut self,
+	// 	pfx: Option<Prefix>,
+	// 	pfx_sec: Option<Prefix>,
+	// 	sfx_sec: Option<Prefix>,
+	// 	sfx: Option<Prefix>,
+	// ) -> Self {
+	// 	let new_stem: Cow<'_, str> = Cow::Owned(self.stem);
+
+	// 	if let Some(pfx) = pfx {
+	// 		pfx.
+	// 	}
+	// 	if let Some(pfx_sec) = pfx_sec {}
+	// 	if let Some(sfx_sec) = sfx_sec {}
+	// 	if let Some(sfx) = sfx {}
+
+	// 	self
+	// }
 }
 
 impl fmt::Display for AffixForm {
 	/// Must look like
 	/// AffixForm(text = prefix + stem + suffix)
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "[{} = ", self.text)?;
+		write!(f, "{} = ", self.text)?;
 
 		if let Some(prefix) = &self.prefix {
+			write!(f, "{prefix} + ")?;
+		}
+		if let Some(prefix) = &self.prefix_second {
 			write!(f, "{prefix} + ")?;
 		}
 
 		write!(f, "{}", self.stem)?;
 
+		if let Some(prefix) = &self.suffix_second {
+			write!(f, " + {prefix}")?;
+		}
 		if let Some(suffix) = &self.suffix {
 			write!(f, " + {suffix}")?;
 		}
 
-		write!(f, "]")
+		Ok(())
 	}
 }
 

@@ -123,7 +123,7 @@ pub(crate) struct Options {
 	pub(crate) flag_aliases: Vec<Vec<Flag>>,
 	/// `AM`
 	/// Table is `0`-indexed.
-	morphological_aliases: Vec<DataField>,
+	pub(crate) morphological_aliases: Vec<Vec<DataField>>,
 
 	// ——— for suggestions
 	/// `KEY`
@@ -525,7 +525,7 @@ impl AffParser {
 						usize::try_from(num).unwrap(),
 						usize::try_from(num).unwrap(),
 						tag("AF ")
-							.precedes(Self::parse_flags(&options.flag_ty, &options.flag_aliases))
+							.precedes(Self::parse_flags(options))
 							.terminated(space0)
 							.terminated(newline),
 					)(i)?;
@@ -537,7 +537,21 @@ impl AffParser {
 					(i, options.flag_aliases = reps)
 				}
 				"AM" => {
-					options.morphological_aliases = todo!("AM");
+					let (i, num) = u64_p.terminated(newline).parse(i)?;
+					let (i, reps) = many_m_n(
+						usize::try_from(num).unwrap(),
+						usize::try_from(num).unwrap(),
+						tag("AM ")
+							.precedes(Self::parse_data_fields)
+							.terminated(space0)
+							.terminated(newline),
+					)(i)?;
+
+					for (i, rep) in reps.iter().enumerate() {
+						log::debug!("(AM) aliased {} to {rep:?}", i + 1);
+					}
+
+					(i, options.morphological_aliases = reps)
 				}
 
 				// ——— for suggestions
@@ -724,8 +738,7 @@ impl AffParser {
 									is_not("/ \n")
 										// .map(|s| if s == "0" { None } else { Some(s) })
 										.map(|s| if s == "0" { "" } else { s }),
-									opt(Self::parse_flags(&options.flag_ty, &options.flag_aliases)
-										.preceded_by(tag("/"))),
+									opt(Self::parse_flags(&options).preceded_by(tag("/"))),
 								))
 								.preceded_by(space1)
 								.parse(i)?;
@@ -796,8 +809,7 @@ impl AffParser {
 									is_not("/ \n")
 										// .map(|s| if s == "0" { None } else { Some(s) })
 										.map(|s| if s == "0" { "" } else { s }),
-									opt(Self::parse_flags(&options.flag_ty, &options.flag_aliases)
-										.preceded_by(tag("/"))),
+									opt(Self::parse_flags(&options).preceded_by(tag("/"))),
 								))
 								.preceded_by(space1)
 								.parse(i)?;
@@ -954,23 +966,20 @@ impl AffParser {
 	}
 
 	/// Parse a list of flags
-	fn parse_flags<'a>(
-		fty: &'a FlagType,
-
-		flag_aliases: &'a [Vec<Flag>],
-	) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + 'a {
+	fn parse_flags<'a>(options: &'a Options) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + 'a {
 		move |i: &str| {
 			{
 				// TODO: this does not check `strip/2,3,4`
 				let (i, digit) = opt(u64_p)(i)?;
 
-				if !flag_aliases.is_empty() {
+				if !options.flag_aliases.is_empty() {
 					if let Some(digit) = digit {
 						return Ok((
 							i,
 							// TODO: errors must be really bad
 							// wouldn't like to debug that later
-							flag_aliases
+							options
+								.flag_aliases
 								// We translate to a 0-index table
 								.get(usize::try_from(digit - 1).unwrap())
 								.unwrap()
@@ -979,23 +988,60 @@ impl AffParser {
 					}
 				}
 			}
-			match fty {
+
+			match options.flag_ty {
 				FlagType::Short | FlagType::Long | FlagType::Utf8 => {
-					many1(Self::parse_flag(fty))(i)
+					many1(Self::parse_flag(&options.flag_ty))(i)
 				}
-				FlagType::Numeric => separated_list1(tag(","), Self::parse_flag(fty))(i),
+				FlagType::Numeric => {
+					separated_list1(tag(","), Self::parse_flag(&options.flag_ty))(i)
+				}
 			}
+		}
+	}
+
+	/// Parse stem associated data fields
+	fn parse_data_fields(i: &str) -> IResult<&str, Vec<DataField>> {
+		separated_list1(space1, Self::parse_data_field.map(|df| df))(i)
+	}
+	/// Parse a single data field
+	fn parse_data_field(i: &str) -> IResult<&str, DataField> {
+		let (i, discriminant) = take(2usize).terminated(tag(":")).parse(i)?;
+
+		let till_space = map(is_not(" \n"), ToString::to_string);
+
+		match discriminant {
+			"ph" => map(till_space, DataField::Alternative)(i),
+			"st" => map(till_space, DataField::Stem)(i),
+			"al" => map(till_space, DataField::Allomorph)(i),
+			"po" => map(till_space, DataField::PartOfSpeech)(i),
+
+			"ds" => map(till_space, DataField::DerivationalSuffix)(i),
+			"is" => map(till_space, DataField::InflectionalSuffix)(i),
+			"ts" => map(till_space, DataField::TerminalSuffix)(i),
+
+			"dp" => map(till_space, DataField::DerivationalPrefix)(i),
+			"ip" => map(till_space, DataField::InflectionalPrefix)(i),
+			"tp" => map(till_space, DataField::TerminalPrefix)(i),
+
+			"sp" => map(till_space, DataField::SurfacePrefix)(i),
+			"pa" => map(till_space, DataField::PartsOfCompound)(i),
+
+			invalid_tag => todo!("error out with invalid data field type: {invalid_tag}"),
 		}
 	}
 }
 
+// TODO: remove
 // Reexport to parse flags in the dictionary
 #[doc(hidden)]
-pub(crate) fn parse_flags<'a>(
-	fty: &'a FlagType,
-	flags: &'a [Vec<Flag>],
-) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + 'a {
-	AffParser::parse_flags(fty, flags)
+pub(crate) fn parse_flags(options: &Options) -> impl Fn(&str) -> IResult<&str, Vec<Flag>> + '_ {
+	AffParser::parse_flags(options)
+}
+// Reexport to parse data fields in the dictionary
+#[doc(hidden)]
+pub(crate) fn parse_data_field(i: &str) -> IResult<&str, DataField> {
+	AffParser::parse_data_field(i)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1137,6 +1183,62 @@ SFX D   0     d          e
 		let results = parser.suffix_index.get_all(&searched_word);
 
 		assert_eq!(results.len(), 3);
+
+		Ok(())
+	}
+
+	#[test]
+	fn parse_data_field_forms() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
+		macro_rules! test {
+			($source:literal => $res:expr) => {{
+				use DataField::*;
+				let (i, df) = AffParser::parse_data_field($source)?;
+				assert_eq!(df, $res);
+				assert_eq!(i, "");
+			}};
+		}
+
+		let test_word = String::from("hello");
+
+		test!("ph:hello" => Alternative(test_word.clone()));
+		// TODO
+		// test_df!("ph:hello->bye" => Alternative(test_word));
+
+		test!("st:hello" => Stem(test_word.clone()));
+		test!("al:hello" => Allomorph(test_word.clone()));
+		test!("po:hello" => PartOfSpeech(test_word.clone()));
+
+		test!("ds:hello" => DerivationalSuffix(test_word.clone()));
+		test!("is:hello" => InflectionalSuffix(test_word.clone()));
+		test!("ts:hello" => TerminalSuffix(test_word.clone()));
+
+		test!("dp:hello" => DerivationalPrefix(test_word.clone()));
+		test!("ip:hello" => InflectionalPrefix(test_word.clone()));
+		test!("tp:hello" => TerminalPrefix(test_word.clone()));
+
+		test!("sp:hello" => SurfacePrefix(test_word.clone()));
+		test!("pa:hello" => PartsOfCompound(test_word));
+
+		Ok(())
+	}
+
+	#[test]
+	fn parse_data_fields() -> Result<(), nom::Err<nom::error::Error<&'static str>>> {
+		use DataField::*;
+		macro_rules! test {
+			($source:literal => $res:expr) => {{
+				let (i, s) = AffParser::parse_data_fields($source)?;
+				assert_eq!(s.as_slice(), $res.as_slice());
+				assert_eq!(i, "");
+			}};
+		}
+
+		let test_word = String::from("hello");
+
+		test!("ph:hello al:hello" => [Alternative(test_word.clone()), Allomorph(test_word.clone())]);
+		test!("ph:hello al:hello po:hello" => [Alternative(test_word.clone()), Allomorph(test_word.clone()), PartOfSpeech(test_word)]);
+		// TODO
+		// test_df!("ph:hello->bye" => Alternative(hello.clone()));
 
 		Ok(())
 	}

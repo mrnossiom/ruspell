@@ -11,7 +11,10 @@ pub(crate) fn test_dictionary_pair(
 	wrong: &[&str],
 	suggestions: Option<&[Vec<&str>]>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-	pretty_env_logger::init();
+	let _ = pretty_env_logger::formatted_builder()
+		.parse_default_env()
+		.is_test(true)
+		.try_init();
 
 	let dict = Dictionary::from_slice(aff, dic)?;
 
