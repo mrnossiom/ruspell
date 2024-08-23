@@ -6,7 +6,7 @@ A port of Hunspell to Rust
 
 <p align="center">
   <img alt="Nix Powered" src="https://img.shields.io/badge/Nix-Powered-blue?logo=nixos" />
-  <a src="https://wakatime.com/badge/github/mrnossiom/ruspell">
+  <a href="https://wakatime.com/badge/github/mrnossiom/ruspell">
     <img alt="Time spent" src="https://wakatime.com/badge/github/mrnossiom/ruspell.svg" />
   </a>
 </p>

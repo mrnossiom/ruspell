@@ -25,7 +25,7 @@ dead_code = { level = "allow", priority = 1 }
 [lints.clippy]
 nursery = "warn"
 pedantic = "warn"
-cargo = "warn"
+# cargo = "warn"
 
 missing_docs = "warn"
 dbg_macro = "warn"
