@@ -15,7 +15,10 @@ A port of Hunspell to Rust
 
 ...
 
+# Credits
+
+This project is based on the really good articles series ["Rebuilding the spellchecker"](https://zverok.space/spellchecker.html) by *Victor Shepelev* (@zverok). I would love to make this a second working implementation that could also be used for exlanatory purposes.
+
 ---
 
 Work is licensed under [`CECILL-2.1`](https://choosealicense.com/licenses/cecill-2.1/), a French OSS license that allows modification and distribution of the software while requiring the same license for derived works.
-

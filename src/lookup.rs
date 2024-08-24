@@ -280,13 +280,12 @@ impl Dictionary {
 
 				s.condition.clone().map_or(true, |r| r.is_match(&word))
 			})
-			.map(|sfx| {
+			.map(move |sfx| {
 				(
 					sfx,
 					prefix
 						.as_ref()
-						.map(|p| p.stem.as_str())
-						.unwrap_or(word)
+						.map_or(word, |p| p.stem.as_str())
 						.strip_suffix(&sfx.add)
 						.unwrap(),
 				)
