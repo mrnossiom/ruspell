@@ -26,6 +26,7 @@ use std::{
 
 /// A `.dic` file.
 /// Holds every stems and an index to them
+#[derive(Debug, Clone)]
 pub(crate) struct DicFile {
 	/// Stems found in `.dic` file
 	stems: Vec<Stem>,

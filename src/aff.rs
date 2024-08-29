@@ -26,6 +26,7 @@ use std::{
 
 /// An `.aff` file.
 /// Holds defined options, additional flags and affixes with an index each.
+#[derive(Debug, Clone)]
 pub(crate) struct AffFile {
 	/// Additional options
 	pub(crate) options: Options,
@@ -103,7 +104,7 @@ impl AffFile {
 }
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 /// Additional options defined in `.aff` file
 pub(crate) struct Options {
 	/// `SET`
@@ -193,7 +194,7 @@ pub(crate) struct Options {
 	check_sharps: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 /// Flags that are not affixes but define additional behaviour
 pub(crate) struct AdditionalFlags {
 	// ——— for suggestions
@@ -244,14 +245,14 @@ pub(crate) struct AdditionalFlags {
 }
 
 /// A lang identifier (e.g. `fr_FR`, `en_US`)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Lang(String);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Pattern;
 
 /// Encoding specified in `.aff` file
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 enum Encoding {
 	/// `UTF-8`
 	#[default]
@@ -382,7 +383,7 @@ impl fmt::Display for Affix<Suffix> {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Replacement {
 	strip: String,
 	add: String,
@@ -390,7 +391,7 @@ pub(crate) struct Replacement {
 
 /// Used for input and output conversion tables (`OCONV`, `ICONV`) which normalizes
 /// some characters for lookup.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ConversionTable {
 	/// Inner normalize table
 	replacements: Vec<(Regex, String)>,
@@ -1102,7 +1103,7 @@ impl fmt::Display for Flag {
 	}
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct IgnoreList(Vec<char>);
 
 impl IgnoreList {

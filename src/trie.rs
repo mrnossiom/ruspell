@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Trie data structure
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Trie<V> {
 	/// Tree root
 	root: TrieNode<V>,
@@ -21,7 +21,7 @@ impl<V> Default for Trie<V> {
 }
 
 /// A [`Trie`] node
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TrieNode<V> {
 	/// Character mapped to children nodes
 	leaves: HashMap<char, Self>,

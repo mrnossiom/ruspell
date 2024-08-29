@@ -7,6 +7,7 @@
 use crate::{aff::AffFile, dic::DicFile};
 use std::{io, path::Path};
 
+#[derive(Debug, Clone)]
 pub struct Dictionary {
 	/// Underlying `.aff` file
 	pub(crate) aff: AffFile,
