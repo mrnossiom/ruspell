@@ -210,7 +210,7 @@ impl Casing {
 	/// Based on input, guess with a simple algorithm the casing
 	pub(crate) fn guess(s: &str) -> Self {
 		let first_char_is_upper = s.chars().next().is_some_and(char::is_uppercase);
-		let chars = s.chars().skip(1);
+		let chars = s.chars().skip(1).filter(|c| char::is_alphabetic(*c));
 
 		#[allow(clippy::match_bool)]
 		match first_char_is_upper {
