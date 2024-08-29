@@ -300,18 +300,8 @@ impl Dictionary {
 						.suffix_index
 						.get_all(collect)
 						.into_iter()
-						.inspect(|d| {
-							log::info!("=== {}", d);
-						})
 						.filter(|deep_sfx| deep_sfx.flags.has_flag(&suffix.clone().flag))
-						.map(move |deep_sfx| (suffix, Some(deep_sfx.clone())))
-						.inspect(|sfx| {
-							log::debug!(
-								"deep check {} — {}",
-								sfx.1.as_ref().map(ToString::to_string).unwrap_or_default(),
-								sfx.0,
-							);
-						}),
+						.map(move |deep_sfx| (suffix, Some(deep_sfx.clone()))),
 				)
 			})
 			.map(|(first_sfx, second_sfx)| {

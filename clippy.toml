@@ -1,1 +1,5 @@
 doc-valid-idents = ["LibreOffice"]
+
+disallowed-methods = [
+    { path = "std::boxed::Box::leak", reason = "no leaking memory" },
+]
