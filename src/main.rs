@@ -35,12 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			stdout().flush().unwrap();
 
 			let mut input = String::new();
-			stdin().read_line(&mut input).unwrap();
+			if let 0 = stdin().read_line(&mut input)? {
+				std::process::exit(0);
+			};
 			let input = input.trim();
-
-			if input == ":q" {
-				break;
-			}
 
 			input.split_whitespace().for_each(|word| {
 				lookup_and_print(&dict, word);
