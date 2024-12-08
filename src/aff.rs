@@ -1107,7 +1107,7 @@ impl fmt::Display for Flag {
 pub(crate) struct IgnoreList(Vec<char>);
 
 impl IgnoreList {
-	pub(crate) fn erase<'a>(&self, word: &mut String) {
+	pub(crate) fn erase(&self, word: &mut String) {
 		word.retain(|c| !self.0.contains(&c));
 	}
 }

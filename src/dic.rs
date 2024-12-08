@@ -52,7 +52,7 @@ impl DicFile {
 
 impl DicFile {
 	/// Returns every stem registered in a dictionary and its metadata
-	pub(crate) fn homonyms<'a>(&'a self, stem: &'a str) -> impl Iterator<Item = &Stem> + 'a {
+	pub(crate) fn homonyms(&'_ self, stem: &'_ str) -> impl Iterator<Item = &'_ Stem> + '_ {
 		self.index.get(stem).into_iter().flatten()
 	}
 }

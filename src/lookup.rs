@@ -65,7 +65,7 @@ impl Dictionary {
 			_ => (word, false),
 		};
 		// TODO: add dot back
-		let word = word.trim_end_matches(|c: char| c == '.');
+		let word = word.trim_end_matches('.');
 
 		log::debug!("trimmed {word:?}");
 
@@ -180,7 +180,7 @@ impl Dictionary {
 	}
 
 	/// Produce every possible [`AffixForm`], it will be validated by [`Dictionary::is_valid_affix_form`] after
-	fn produce_affix_forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = AffixForm> + '_ {
+	fn produce_affix_forms<'a>(&'a self, word: &'a str) -> impl Iterator<Item = AffixForm> + 'a {
 		// whole word without affixes is one possible form
 		let whole_word = AffixForm::new(word, None, None);
 
@@ -193,10 +193,7 @@ impl Dictionary {
 	// TODO: bench and choose
 	/// Produce every possible [`AffixForm`], it will be validated by [`Dictionary::is_valid_affix_form`] after
 	#[cfg(debug_assertions)]
-	fn produce_affix_forms_two<'a>(
-		&'a self,
-		word: &'a str,
-	) -> impl Iterator<Item = AffixForm> + '_ {
+	fn produce_affix_forms_two(&'_ self, word: &'_ str) -> impl Iterator<Item = AffixForm> + '_ {
 		let whole_word = AffixForm::new(word, None, None);
 
 		let mut forms = vec![whole_word];
@@ -278,7 +275,7 @@ impl Dictionary {
 				let mut word = word.strip_suffix(&s.add).unwrap().to_owned();
 				word.push_str(&s.strip);
 
-				s.condition.clone().map_or(true, |r| r.is_match(&word))
+				s.condition.clone().is_none_or(|r| r.is_match(&word))
 			})
 			.map(move |sfx| {
 				(
